@@ -1,0 +1,95 @@
+﻿{
+ "note": "Phase 1 smoke measurements (3 queries per model, free models). Judge model = nvidia/nemotron-3-super-120b-a12b:free.",
+ "measurements": {
+  "large": {
+   "model": "nvidia/nemotron-3-super-120b-a12b",
+   "results_dir": ".cache/smoke-runs/20261011-100359",
+   "queries": [
+    {
+     "query": "smoke1",
+     "route": "simple",
+     "steps": 2,
+     "agent_llm_calls": 5,
+     "agent_in": 6188,
+     "agent_out": 1129,
+     "agent_latency_s": 40.56,
+     "judge_llm_calls": 1,
+     "judge_in": 490,
+     "judge_out": 565,
+     "retried_calls": 0
+    },
+    {
+     "query": "smoke2",
+     "route": "multi_step",
+     "steps": 6,
+     "agent_llm_calls": 8,
+     "agent_in": 13089,
+     "agent_out": 4217,
+     "agent_latency_s": 66.06,
+     "judge_llm_calls": 1,
+     "judge_in": 672,
+     "judge_out": 1019,
+     "retried_calls": 0
+    },
+    {
+     "query": "smoke3",
+     "route": "multi_step",
+     "steps": 2,
+     "agent_llm_calls": 5,
+     "agent_in": 6350,
+     "agent_out": 2568,
+     "agent_latency_s": 52.02,
+     "judge_llm_calls": 2,
+     "judge_in": 2524,
+     "judge_out": 1946,
+     "retried_calls": 0
+    }
+   ]
+  },
+  "small": {
+   "model": "poolside/laguna-xs-2.1",
+   "results_dir": ".cache/smoke-runs/20261011-101723",
+   "queries": [
+    {
+     "query": "smoke1",
+     "route": "simple",
+     "steps": 2,
+     "agent_llm_calls": 5,
+     "agent_in": 5385,
+     "agent_out": 485,
+     "agent_latency_s": 92.2,
+     "judge_llm_calls": 1,
+     "judge_in": 1044,
+     "judge_out": 1150,
+     "retried_calls": 5
+    },
+    {
+     "query": "smoke2",
+     "route": "multi_step",
+     "steps": 6,
+     "agent_llm_calls": 9,
+     "agent_in": 12957,
+     "agent_out": 1408,
+     "agent_latency_s": 90.26,
+     "judge_llm_calls": 1,
+     "judge_in": 645,
+     "judge_out": 790,
+     "retried_calls": 5
+    },
+    {
+     "query": "smoke3",
+     "route": "multi_step",
+     "steps": 2,
+     "agent_llm_calls": 5,
+     "agent_in": 5535,
+     "agent_out": 704,
+     "agent_latency_s": 60.95,
+     "judge_llm_calls": 1,
+     "judge_in": 1425,
+     "judge_out": 1323,
+     "retried_calls": 4
+    }
+   ]
+  }
+ }
+}
