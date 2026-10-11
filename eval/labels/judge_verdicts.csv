@@ -1,0 +1,31 @@
+row_id,judge_verdict,judge_reason,results_run,record_id,model,sentence_index
+0,unsupported,The cited segments discuss unrelated topics ('I'm going all in.' and a space/sun monologue) and do not mention AI or fusion reactor comparisons.,20261011-125600,ex22,poolside/laguna-xs-2.1:free,3
+1,supported,The cited segment contains the exact quoted phrase about attentional mechanisms focusing the network's ability to learn which part of the input to look at.,20261011-125600,ex03,poolside/laguna-xs-2.1:free,1
+2,supported,"The cited segment only states that Chapter 'Part 40' covers a term and does not mention Nvidia's position or AI demand outlook, supporting the claim that it lacks those details.",20261011-125600,nc06,poolside/laguna-xs-2.1:free,1
+3,unsupported,"No segment is cited for this sentence, so the claim about the magnet's design and plasma temperature lacks support.",20261011-125600,ex22,poolside/laguna-xs-2.1:free,1
+4,supported,"The cited segment mentions AI‑driven abundance, UBI freeing people from work, and a capitalist economy where AI gives resources, matching the claim.",20261011-125600,ex16,nvidia/nemotron-3-super-120b-a12b:free,1
+5,unsupported,The sentence asserts Vapnik's conclusion but provides no citation to support it.,20261011-125600,ex01,nvidia/nemotron-3-super-120b-a12b:free,3
+6,unsupported,The sentence makes a claim but cites no segment.,20261011-125600,ex16,poolside/laguna-xs-2.1:free,4
+7,unsupported,No cited segment provided to support the claim.,20261011-125600,ex14,poolside/laguna-xs-2.1:free,0
+8,supported,The cited segment contains the exact quoted question posed by Vapnik.,20261011-125600,ex10,poolside/laguna-xs-2.1:free,1
+9,supported,The segment states the South Korea unwind was historic and that 1.2 million leveraged trading accounts were hit with margin calls.,20261011-125600,ex21,poolside/laguna-xs-2.1:free,0
+10,unsupported,"The sentence makes a claim about AI regulation but cites no segment, so it lacks support.",20261011-125600,ex17,nvidia/nemotron-3-super-120b-a12b:free,2
+11,supported,"Heading/label, no claim.",20261011-125600,nc04,poolside/laguna-xs-2.1:free,3
+12,supported,"The cited segments describe putting CUDA on GeForce as a very hard strategic move that cost profits, was done to become a computing company with compatible architecture, and to leverage GeForce's large installed base.",20261011-125600,nc03,nvidia/nemotron-3-super-120b-a12b:free,0
+13,unsupported,The cited segment does not mention Vapnik noting the criticism; it only discusses Lévi-Strauss's criticism and the limited number of units.,20261011-125600,ex07,nvidia/nemotron-3-super-120b-a12b:free,0
+14,unsupported,"The cited segment discusses 'who guards the guardians' and separation of powers, not Anthropic's proximity to regulation or consumer fear.",20261011-125600,ex17,poolside/laguna-xs-2.1:free,1
+15,unsupported,The cited segment discusses chip stock declines but does not mention that margin calls occurred amid those declines.,20261011-125600,ex21,poolside/laguna-xs-2.1:free,2
+16,supported,The cited segment says convolutional nets keep translation invariance and restrict the function set accordingly.,20261011-125600,ex02,poolside/laguna-xs-2.1:free,2
+17,unsupported,"The cited segment does not mention Vapnik, so the attribution to Vapnik is not supported.",20261011-125600,ex02,nvidia/nemotron-3-super-120b-a12b:free,0
+18,supported,The cited segments say discovering good predicates is the essence of human‑level intelligence sought and question whether an automated method exists and what mechanisms could achieve it.,20261011-125600,ex01,nvidia/nemotron-3-super-120b-a12b:free,2
+19,supported,The segment notes the 1.2 million figure is two weeks old and that the actual number is much larger today.,20261011-125600,ex21,poolside/laguna-xs-2.1:free,1
+20,unsupported,The cited segment mentions a speaker's game‑theory view but does not state that Anthropic's lobbying efforts are part of a broader strategy.,20261011-125600,ex17,poolside/laguna-xs-2.1:free,2
+21,supported,"The cited segment mentions machines of love/grace, massive abundance, UBI, and that humans may not need to work.",20261011-125600,ex16,poolside/laguna-xs-2.1:free,0
+22,supported,"The cited segment describes finding contradictions in existing theories and likening the process to physics, matching the claim.",20261011-125600,ex09,poolside/laguna-xs-2.1:free,0
+23,supported,The segment states the NASDAQ chip index (Philadelphia Semiconductor Index) is down over 20%.,20261011-125600,ex20,poolside/laguna-xs-2.1:free,0
+24,unsupported,The sentence makes a factual claim about the video's content but cites no segment.,20261011-125600,ex08,poolside/laguna-xs-2.1:free,0
+25,unsupported,No citation is provided; the conclusion that the statement cannot be extracted is unsupported.,20261011-125600,nc04,nvidia/nemotron-3-super-120b-a12b:free,2
+26,unsupported,"The cited segment only contains a speculation that he 'think he used chat GBT', not a statement that he actually used ChatGPT.",20261011-125600,ex12,poolside/laguna-xs-2.1:free,2
+27,supported,"The cited segment states the phrase traces back to Socrates and asks what stops the guardians from becoming a threat, matching the sentence.",20261011-125600,ex17,nvidia/nemotron-3-super-120b-a12b:free,0
+28,supported,The cited segment explicitly states China is installing a 582‑ton superconducting magnet at its nuclear fusion center and calls it the most advanced fusion system.,20261011-125600,ex22,poolside/laguna-xs-2.1:free,0
+29,unsupported,The sentence makes a claim about Vapnik's explanation but cites no segment.,20261011-125600,ex09,nvidia/nemotron-3-super-120b-a12b:free,0
