@@ -45,6 +45,12 @@ class Settings:
     cache_enabled: bool = True
     cache_dir: Path = ROOT / ".cache" / "llm"
 
+    # Optional Langfuse tracing: on only when both keys are set (see tracing.py).
+    langfuse_public_key: str = field(default="", repr=False)
+    langfuse_secret_key: str = field(default="", repr=False)
+    langfuse_host: str = "https://cloud.langfuse.com"
+    tracing: bool = True
+
     def model_for(self, which: str) -> str:
         if which == "small":
             return self.model_small
@@ -75,5 +81,9 @@ class Settings:
             requests_per_minute=int(env("REQUESTS_PER_MINUTE", str(d.requests_per_minute))),
             max_tool_steps=int(env("MAX_TOOL_STEPS", str(d.max_tool_steps))),
             cache_enabled=_flag("LLM_CACHE", True),
+            langfuse_public_key=env("LANGFUSE_PUBLIC_KEY", ""),
+            langfuse_secret_key=env("LANGFUSE_SECRET_KEY", ""),
+            langfuse_host=env("LANGFUSE_HOST") or env("LANGFUSE_BASE_URL") or d.langfuse_host,
+            tracing=_flag("LANGFUSE_TRACING", True),
         )
 

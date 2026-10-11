@@ -11,6 +11,7 @@ from .config import Settings
 from .graph import run_agent
 from .llm import OpenRouterClient
 from .mcp_tools import open_toolbox
+from .tracing import tracer_for
 
 
 def format_result(res: dict) -> str:
@@ -36,6 +37,9 @@ async def amain(args: argparse.Namespace) -> int:
     settings = Settings.from_env()
     if args.no_cache:
         settings.cache_enabled = False
+    if args.no_trace:
+        settings.tracing = False
+    tracer = tracer_for(settings)
     if not settings.openrouter_api_key:
         print("OPENROUTER_API_KEY is not set (see .env.example).", file=sys.stderr)
         return 2
@@ -46,6 +50,9 @@ async def amain(args: argparse.Namespace) -> int:
             res = await run_agent(args.question, llm, tools, settings)
     finally:
         await client.aclose()
+        tracer.flush()
+    if res.get("trace_id"):
+        print(f"trace: {tracer.trace_url(res['trace_id']) or res['trace_id']}", file=sys.stderr)
     print(json.dumps(res, indent=2, ensure_ascii=False) if args.json else format_result(res))
     return 0
 
@@ -55,6 +62,7 @@ def main() -> None:
     p.add_argument("question")
     p.add_argument("--model", default="small", help="small | large | an explicit OpenRouter model id")
     p.add_argument("--no-cache", action="store_true", help="disable the on-disk LLM response cache")
+    p.add_argument("--no-trace", action="store_true", help="do not send this run to Langfuse even if keys are set")
     p.add_argument("--json", action="store_true", help="print the full result as JSON")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()

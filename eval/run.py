@@ -19,9 +19,10 @@ from atlandex_agent.graph import run_agent
 from atlandex_agent.llm import (BudgetExceeded, LLMError, LLMUnavailable, OpenRouterClient,
                                 PaidCallBlocked)
 from atlandex_agent.mcp_tools import open_toolbox
+from atlandex_agent.tracing import TraceInfo, tracer_for
 
 from .judge import judge_answer
-from .metrics import aggregate
+from .metrics import aggregate, hallucination_rate, router_correct, segment_hit, video_hit
 
 DEFAULT_DATASET = ROOT / "eval" / "dataset.jsonl"
 RESULTS_DIR = ROOT / "eval" / "results"
@@ -72,10 +73,50 @@ def summary_markdown(agg: dict[str, Any], results_dir: Path, args: argparse.Name
     return "\n".join(lines) + "\n"
 
 
+def send_scores(tracer, rec: dict[str, Any], tolerance_sec: int) -> None:
+    """Attach the eval results to the run's Langfuse trace (no-op when tracing is off).
+
+    - hallucination_rate: share of judged answer sentences the judge marked unsupported (0 = clean);
+      the comment lists the unsupported sentences.
+    - task_success: the answer cites a gold segment (start within the tolerance), the project's definition.
+      Only sent for records that have gold segments.
+    - video_hit: the answer cites a segment of a gold video. Kept separate from task_success.
+    - router_correct: the router picked the expected route.
+    """
+    tid = rec.get("trace_id")
+    if not tid:
+        return
+    cited = rec.get("cited_ids", [])
+    sentences = (rec.get("judge") or {}).get("sentences", [])
+    rate = hallucination_rate(s["verdict"] for s in sentences)
+    if rate is not None:
+        bad = [f"- {s['text'][:200]} ({s['reason'][:200]})" for s in sentences if s["verdict"] == "unsupported"]
+        tracer.score(tid, "hallucination_rate", rate, "\n".join(bad) or "all judged sentences supported")
+    if rec.get("gold_segments"):
+        tracer.score(tid, "task_success", segment_hit(cited, rec["gold_segments"], tolerance_sec),
+                     f"cites a gold segment within +/-{tolerance_sec}s")
+    if rec.get("gold_video_ids"):
+        tracer.score(tid, "video_hit", video_hit(cited, rec["gold_video_ids"]))
+    if rec.get("expected_route"):
+        tracer.score(tid, "router_correct", router_correct(rec.get("route"), rec["expected_route"]),
+                     f"route={rec.get('route')} expected={rec['expected_route']}")
+
+
+def merge_records(kept: dict[tuple[str, str], dict[str, Any]], new: list[dict[str, Any]],
+                  dataset: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Finished records plus this pass's records (which win), in dataset order, small before large."""
+    order = {r["id"]: i for i, r in enumerate(dataset)}
+    merged = {**kept, **{(r["id"], r["model_alias"]): r for r in new}}
+    return sorted(merged.values(), key=lambda r: (order.get(r["id"], 10**9), r["model_alias"] != "small"))
+
+
 async def amain(args: argparse.Namespace) -> int:
     settings = Settings.from_env()
     if args.no_cache:
         settings.cache_enabled = False
+    if args.no_trace:
+        settings.tracing = False
+    tracer = tracer_for(settings)
     if not settings.openrouter_api_key:
         print("OPENROUTER_API_KEY is not set (see .env.example).", file=sys.stderr)
         return 2
@@ -83,8 +124,20 @@ async def amain(args: argparse.Namespace) -> int:
     rows = select(dataset, args.subset, args.ids.split(",") if args.ids else None, args.include_review)
     models = ["small", "large"] if args.model == "both" else [args.model]
 
-    results_dir = RESULTS_DIR / datetime.now().strftime("%Y%m%d-%H%M%S")
-    results_dir.mkdir(parents=True)
+    kept: dict[tuple[str, str], dict[str, Any]] = {}
+    if args.resume:  # keep finished records (with their original latency), redo only the errored ones
+        results_dir = Path(args.resume)
+        for line in (results_dir / "records.jsonl").read_text(encoding="utf-8").splitlines():
+            r = json.loads(line)
+            if not r.get("error"):
+                kept[(r["id"], r["model_alias"])] = r
+        (results_dir / "records.jsonl.bak").write_text(  # a resume must never be able to lose finished records
+            (results_dir / "records.jsonl").read_text(encoding="utf-8"), encoding="utf-8")
+        (results_dir / "records.jsonl").write_text(
+            "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in kept.values()), encoding="utf-8")
+    else:
+        results_dir = RESULTS_DIR / datetime.now().strftime("%Y%m%d-%H%M%S")
+        results_dir.mkdir(parents=True)
     records_path = results_dir / "records.jsonl"
     client = OpenRouterClient(settings)
     judge_llm = client.bind(settings.model_large)
@@ -94,16 +147,20 @@ async def amain(args: argparse.Namespace) -> int:
     async with open_toolbox(settings) as tools:
         for row in rows:
             for which in models:
+                if (row["id"], which) in kept:
+                    continue
                 llm = client.bind(settings.model_for(which))
                 rec: dict[str, Any] = {k: row.get(k) for k in
                                        ("id", "question", "gold_video_ids", "gold_segments", "expected_route",
                                         "source", "needs_review", "verified_by")}
                 rec["model_alias"] = which
                 try:
-                    res = await run_agent(row["question"], llm, tools, settings)
+                    info = TraceInfo(run_id=results_dir.name, query_id=row["id"], model_alias=which)
+                    res = await run_agent(row["question"], llm, tools, settings, trace=info, tracer=tracer)
                     rec.update(res)
                     if not res["clarification"]:
                         rec["judge"] = await judge_answer(judge_llm, res["answer"], res["segments"])
+                    send_scores(tracer, rec, args.gold_tolerance_sec)
                 except (PaidCallBlocked, BudgetExceeded) as e:
                     stop = e
                     rec.update(model=llm.model, error=f"{type(e).__name__}: {e}")
@@ -119,7 +176,11 @@ async def amain(args: argparse.Namespace) -> int:
             if stop:
                 break
     await client.aclose()
+    tracer.flush()
 
+    if args.resume:  # finished records stay, whatever subset or model this pass covered
+        records = merge_records(kept, records, dataset)
+    records_path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records), encoding="utf-8")
     # records with a hard error carry no usage; aggregate() skips them via the error field.
     for r in records:
         r.setdefault("usage", {"prompt_tokens": 0, "completion_tokens": 0, "cost_usd": 0.0})
@@ -148,7 +209,10 @@ def main() -> None:
     p.add_argument("--gold-tolerance-sec", type=int, default=60,
                    help="a cited segment counts as gold if same video and start within N seconds "
                         "(bare video-ID gold entries match any segment of that video)")
+    p.add_argument("--resume", default=None, metavar="RESULTS_DIR",
+                   help="re-run only the errored query-runs of an earlier results directory and update it in place")
     p.add_argument("--no-cache", action="store_true")
+    p.add_argument("--no-trace", action="store_true", help="do not send traces/scores to Langfuse even if keys are set")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(message)s")

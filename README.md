@@ -78,6 +78,22 @@ python -m eval.agreement                                       # judge vs your l
 - Each run writes `eval/results/<timestamp>/`: `records.jsonl` (full answers, tool calls, retrieved and cited IDs, tokens, cost; not committed), `summary.json` and `summary.md`.
 - Metrics: task success (cites a gold segment), router accuracy, hallucination rate (share of answer sentences the judge marks unsupported by their cited text), steps, latency p50/p95, tokens and cost per query. The judge prompt is [`eval/judge_prompt.md`](eval/judge_prompt.md).
 
+## Observability
+
+Optional [Langfuse](https://langfuse.com) tracing. Install the extra and set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_HOST` in `.env`:
+
+```bash
+pip install -e ".[tracing]"
+```
+
+Without the keys (or without the extra) nothing changes: tracing is off, `langfuse` is never imported, and the tests and CI need neither. `--no-trace` (agent and eval) or `LANGFUSE_TRACING=false` turns it off even when keys are set. The CLI prints the trace URL.
+
+**What a trace shows.** One agent run is one trace named `atlandex-agent`. Its input is the question and its output is the answer with route, cited and retrieved IDs, citation-check result, notes, latency and token/cost totals. Below it is the LangGraph run with one span per node: `router` (its output is the route and reason), `agent` and `tools` (once per loop turn), `answer`, and `citation_check` (retry or dropped claims). Inside the nodes are one `llm:<role>` generation per model call (model, messages, reply or tool calls, input/output tokens, cost, and whether it was a cache hit or a retry) and one tool span per MCP call (arguments and result; failed calls are marked as errors). Cost is `0` on free models.
+
+**Eval runs.** Each trace is tagged `run:<results dir name>`, `model:<model id>` and `query:<record id>`, and the run id is also the Langfuse session, so one eval run is one session. After the judge has run, these scores are attached to the trace: `hallucination_rate` (share of judged sentences marked unsupported; the comment lists them), `task_success` (cites a gold segment, only for records with gold segments), `video_hit` (cites a gold video), and `router_correct`. The judge's own calls are not traced.
+
+Prompts and retrieved passages are sent to Langfuse as trace content, and tool results longer than 8000 characters are cut in the trace.
+
 ## Tests
 
 ```bash

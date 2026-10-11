@@ -18,6 +18,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Optional Langfuse tracing; the agent runs without it. The LangChain handler imports `langchain` itself.
+tracing = ["langfuse>=4,<5", "langchain>=1.0"]
 
 [tool.setuptools.packages.find]
 include = ["atlandex_agent*", "eval*"]

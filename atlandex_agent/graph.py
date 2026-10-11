@@ -14,6 +14,7 @@ from .config import Settings
 from .llm import LLM, usage_summary, records_to_dicts
 from .mcp_tools import ToolBox
 from .segments import extract_citations, normalize_citations, parse_tool_output
+from .tracing import NullTracer, TraceInfo, tracer_for
 
 ROUTES = ("simple", "multi_step", "unclear")
 NO_COVERAGE = "No indexed video covered this question well enough to answer it."
@@ -199,33 +200,45 @@ def build_graph(llm: LLM, tools: ToolBox, settings: Settings):
     return g.compile()
 
 
-async def run_agent(question: str, llm: LLM, tools: ToolBox, settings: Settings) -> dict[str, Any]:
-    """Run one question; returns a JSON-serialisable result with usage for this run only."""
-    graph = build_graph(llm, tools, settings)
-    first_call = len(llm.calls)
-    t0 = time.perf_counter()
-    final = await graph.ainvoke({"question": question}, {"recursion_limit": 60})
-    latency = time.perf_counter() - t0
-    records = llm.calls[first_call:]
-    segments = final.get("segments", {})
-    answer = final.get("answer", "")
-    cited = extract_citations(answer)
-    return {
-        "question": question,
-        "model": llm.model,
-        "route": final.get("route"),
-        "route_reason": final.get("route_reason", ""),
-        "clarification": bool(final.get("clarification")),
-        "answer": answer,
-        "cited_ids": cited,
-        "citations": {c: segments[c]["citation"] for c in cited if c in segments},
-        "retrieved_ids": list(segments),
-        "segments": segments,
-        "tool_calls": final.get("tool_log", []),
-        "steps": len(final.get("tool_log", [])),
-        "citation_check": final.get("citation_check", {}),
-        "notes": final.get("notes", []),
-        "latency_sec": round(latency, 2),
-        "usage": usage_summary(records),
-        "llm_calls": records_to_dicts(records),
-    }
+async def run_agent(question: str, llm: LLM, tools: ToolBox, settings: Settings,
+                    trace: TraceInfo | None = None, tracer: NullTracer | None = None) -> dict[str, Any]:
+    """Run one question; returns a JSON-serialisable result with usage for this run only.
+
+    With Langfuse configured (see tracing.py) the run is also recorded as one trace; its id is
+    returned as `trace_id`. Without keys `trace_id` is None and nothing else changes.
+    """
+    tracer = tracer or tracer_for(settings)
+    with tracer.run(question, llm.model, trace) as run:
+        llm, tools = run.llm(llm), run.tools(tools)
+        graph = build_graph(llm, tools, settings)
+        first_call = len(llm.calls)
+        t0 = time.perf_counter()
+        final = await graph.ainvoke({"question": question}, {"recursion_limit": 60, **run.config})
+        latency = time.perf_counter() - t0
+        records = llm.calls[first_call:]
+        segments = final.get("segments", {})
+        answer = final.get("answer", "")
+        cited = extract_citations(answer)
+        result = {
+            "question": question,
+            "model": llm.model,
+            "route": final.get("route"),
+            "route_reason": final.get("route_reason", ""),
+            "clarification": bool(final.get("clarification")),
+            "answer": answer,
+            "cited_ids": cited,
+            "citations": {c: segments[c]["citation"] for c in cited if c in segments},
+            "retrieved_ids": list(segments),
+            "segments": segments,
+            "tool_calls": final.get("tool_log", []),
+            "steps": len(final.get("tool_log", [])),
+            "citation_check": final.get("citation_check", {}),
+            "notes": final.get("notes", []),
+            "latency_sec": round(latency, 2),
+            "usage": usage_summary(records),
+            "llm_calls": records_to_dicts(records),
+        }
+        run.finish({k: result[k] for k in ("answer", "model", "route", "route_reason", "cited_ids", "retrieved_ids",
+                                           "steps", "citation_check", "notes", "latency_sec", "usage")})
+        result["trace_id"] = run.trace_id
+        return result
