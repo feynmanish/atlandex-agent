@@ -47,24 +47,38 @@ def main() -> None:
     p.add_argument("--n", type=int, default=30)
     p.add_argument("--results", default=None, help="results directory (default: the latest)")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--stratify", action="store_true",
+                   help="draw half the rows from sentences the judge marked unsupported, half from supported")
     args = p.parse_args()
 
     results = Path(args.results) if args.results else latest_results()
     pool = collect(results)
-    sample = random.Random(args.seed).sample(pool, min(args.n, len(pool)))
+    rng = random.Random(args.seed)
+    if args.stratify:
+        # Half from each judge class (the verdict is used only to balance the sample; it is
+        # not written to to_label.csv). Without this, a low hallucination rate would leave
+        # almost no 'unsupported' rows and kappa would be meaningless.
+        half = args.n // 2
+        uns = rng.sample([s for s in pool if s["verdict"] == "unsupported"],
+                         min(half, sum(s["verdict"] == "unsupported" for s in pool)))
+        sup = [s for s in pool if s["verdict"] == "supported"]
+        sample = uns + rng.sample(sup, min(args.n - len(uns), len(sup)))
+        rng.shuffle(sample)
+    else:
+        sample = rng.sample(pool, min(args.n, len(pool)))
     LABELS_DIR.mkdir(parents=True, exist_ok=True)
     with (LABELS_DIR / "to_label.csv").open("w", newline="", encoding="utf-8") as f, \
             (LABELS_DIR / "judge_verdicts.csv").open("w", newline="", encoding="utf-8") as g:
         w = csv.writer(f)
-        w.writerow(["row_id", "question", "answer_sentence", "cited_segment_text", "human_label"])
+        w.writerow(["row_id", "question", "answer_sentence", "cited_segment_text", "reference_label"])
         v = csv.writer(g)
-        v.writerow(["row_id", "judge_verdict", "judge_reason", "results_run", "record_id", "model"])
+        v.writerow(["row_id", "judge_verdict", "judge_reason", "results_run", "record_id", "model", "sentence_index"])
         for i, s in enumerate(sample):
             w.writerow([i, s["question"], s["sentence"], s["segment_text"], ""])
-            v.writerow([i, s["verdict"], s["reason"], results.name, s["record"], s["model"]])
+            v.writerow([i, s["verdict"], s["reason"], results.name, s["record"], s["model"], s["k"]])
     print(f"Wrote {len(sample)} rows (pool of {len(pool)}) from {results.name}.")
-    print("Fill human_label with 'supported' or 'unsupported' in eval/labels/to_label.csv, "
-          "then run python -m eval.agreement.")
+    print("Fill reference_label with 'supported' or 'unsupported' in eval/labels/to_label.csv "
+          "without opening judge_verdicts.csv, then run python -m eval.agreement.")
 
 
 if __name__ == "__main__":

@@ -8,8 +8,8 @@ from atlandex_agent.citations import drop_unsupported, unsupported_ids
 from atlandex_agent.segments import extract_citations, parse_tool_output, segment_id, split_sentences
 from eval import agreement, sample_for_labels
 from eval.judge import answer_sentences, build_judge_input, judge_answer
-from eval.metrics import (aggregate, hallucination_rate, percentile, router_correct, segment_matches,
-                          summarize, task_success)
+from eval.metrics import (aggregate, hallucination_rate, percentile, router_correct, segment_hit,
+                          summarize, video_hit)
 from fakes import FakeLLM, VID_A, search_json
 
 A = f"{VID_A}@120"
@@ -62,23 +62,27 @@ def test_parse_search_video_builds_segments():
 
 
 # --- metrics ----------------------------------------------------------------
-def test_task_success_needs_one_gold_segment():
-    assert task_success([A, "x@1"], [A, "y@2"])
-    assert not task_success(["x@1"], [A])
-    assert not task_success([], [A])
+def test_video_hit_needs_a_cited_segment_of_a_gold_video():
+    assert video_hit([A, "x@1"], [VID_A])
+    assert video_hit([f"{VID_A}@na1"], [VID_A])  # an untimed passage still proves the right video
+    assert not video_hit(["BBBBBBBBBBB@5"], [VID_A])
+    assert not video_hit([], [VID_A])
 
 
-def test_gold_tolerance_matches_same_video_only():
-    assert not segment_matches(f"{VID_A}@130", A)
-    assert segment_matches(f"{VID_A}@130", A, tolerance_sec=30)
-    assert not segment_matches(f"BBBBBBBBBBB@130", A, tolerance_sec=30)
+SPAN = {"video": VID_A, "start": 100, "end": 150}
 
 
-def test_bare_video_id_gold_matches_any_segment_of_that_video():
-    assert segment_matches(f"{VID_A}@999", VID_A) and segment_matches(f"{VID_A}@na1", VID_A)
-    assert not segment_matches("BBBBBBBBBBB@5", VID_A)
-    assert not segment_matches(f"{VID_A}@na1", A, tolerance_sec=60)  # timed gold needs a timed citation
+def test_segment_hit_uses_the_span_widened_by_the_tolerance():
+    assert segment_hit([f"{VID_A}@120"], [SPAN])
+    assert segment_hit([f"{VID_A}@40"], [SPAN], tolerance_sec=60) and not segment_hit([f"{VID_A}@39"], [SPAN], 60)
+    assert segment_hit([f"{VID_A}@210"], [SPAN], 60) and not segment_hit([f"{VID_A}@211"], [SPAN], 60)
+    assert not segment_hit([f"{VID_A}@40"], [SPAN], tolerance_sec=0)
 
+
+def test_segment_hit_rejects_other_videos_and_untimed_citations():
+    assert not segment_hit(["BBBBBBBBBBB@120"], [SPAN])
+    assert not segment_hit([f"{VID_A}@na1"], [SPAN], 60)  # no start time can never be a segment hit
+    assert not segment_hit([], [SPAN])
 
 def test_router_correct():
     assert router_correct("simple", "simple") and not router_correct("simple", "multi_step")
@@ -96,10 +100,11 @@ def test_percentiles():
     assert percentile([], 50) is None
 
 
-def rec(model="m", source="existing", review=False, cited=(A,), gold=(A,), route="simple", exp="simple",
+def rec(model="m", source="existing", review=False, cited=(A,), route="simple", exp="simple",
         verdicts=("supported",), lat=2.0, steps=2, error=None):
     return {"id": "q", "model": model, "source": source, "needs_review": review, "cited_ids": list(cited),
-            "gold_segment_ids": list(gold), "route": route, "expected_route": exp, "steps": steps,
+            "gold_video_ids": [VID_A], "gold_segments": [{"video": VID_A, "start": 100, "end": 150}],
+            "route": route, "expected_route": exp, "steps": steps,
             "latency_sec": lat, "error": error, "citation_check": {},
             "usage": {"prompt_tokens": 100, "completion_tokens": 20, "cost_usd": 0.0},
             "judge": {"sentences": [{"verdict": v} for v in verdicts], "usage": {"cost_usd": 0.0}}}
@@ -109,7 +114,9 @@ def test_summarize_computes_each_headline_metric():
     s = summarize([rec(), rec(cited=("x@1",), route="multi_step", verdicts=("unsupported", "supported")),
                    rec(error="boom")])
     assert s["n"] == 3 and s["errors"] == 1
-    assert s["task_success"] == pytest.approx(1 / 3)  # the errored record counts as a failure
+    assert s["video_hit_rate"] == pytest.approx(1 / 3)  # the errored record counts as a miss
+    assert s["segment_hit_rate"] == pytest.approx(1 / 3) and s["segment_hit_n"] == 3
+    assert "task_success" not in s
     assert s["router_accuracy"] == pytest.approx(1 / 2)
     assert s["hallucination_rate"] == pytest.approx(1 / 3)
     assert s["steps_mean"] == 2 and s["latency_p50"] == 2.0
@@ -170,7 +177,7 @@ def test_kappa_known_value():
 
 
 def test_agreement_reports_not_yet_labelled(tmp_path):
-    (tmp_path / "to_label.csv").write_text("row_id,question,answer_sentence,cited_segment_text,human_label\n0,q,s,t,\n")
+    (tmp_path / "to_label.csv").write_text("row_id,question,answer_sentence,cited_segment_text,reference_label\n0,q,s,t,\n")
     (tmp_path / "judge_verdicts.csv").write_text("row_id,judge_verdict\n0,supported\n")
     human, judge = agreement.load_pairs(tmp_path)
     assert agreement.compute(human, judge) == {"status": "not yet labelled", "n": 0}
@@ -178,7 +185,7 @@ def test_agreement_reports_not_yet_labelled(tmp_path):
 
 def test_agreement_reads_labels_from_csv(tmp_path):
     (tmp_path / "to_label.csv").write_text(
-        "row_id,question,answer_sentence,cited_segment_text,human_label\n0,q,s,t,supported\n1,q,s,t,U\n2,q,s,t,\n")
+        "row_id,question,answer_sentence,cited_segment_text,reference_label\n0,q,s,t,supported\n1,q,s,t,U\n2,q,s,t,\n")
     (tmp_path / "judge_verdicts.csv").write_text(
         "row_id,judge_verdict\n0,supported\n1,supported\n2,unsupported\n")
     human, judge = agreement.load_pairs(tmp_path)
@@ -200,5 +207,5 @@ def test_sample_for_labels_hides_the_verdict_and_skips_unreviewed(tmp_path, monk
     sample_for_labels.main()
     text = (tmp_path / "labels" / "to_label.csv").read_text()
     assert "S1" in text and "S3" not in text and "S2" not in text
-    assert "supported" not in text.replace("human_label", "")  # verdict lives in the other file
+    assert "supported" not in text.replace("reference_label", "")  # verdict lives in the other file
     assert "judge_verdict" in (tmp_path / "labels" / "judge_verdicts.csv").read_text()

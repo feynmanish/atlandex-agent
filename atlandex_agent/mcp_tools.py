@@ -1,6 +1,7 @@
 """Load the atlandex-mcp tools over stdio via langchain-mcp-adapters."""
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Protocol
@@ -38,8 +39,9 @@ def _as_text(result: Any) -> str:
 
 
 class McpToolBox:
-    def __init__(self, tools: list[Any]):
+    def __init__(self, tools: list[Any], call_timeout_sec: float = 90.0):
         self._tools = {t.name: t for t in tools}
+        self._timeout = call_timeout_sec
 
     def openai_specs(self) -> list[dict[str, Any]]:
         return [convert_to_openai_tool(t) for t in self._tools.values()]
@@ -49,7 +51,9 @@ class McpToolBox:
         if tool is None:
             return f"Error: unknown tool '{name}'. Available: {', '.join(self._tools)}."
         try:
-            return _as_text(await tool.ainvoke(args))
+            return _as_text(await asyncio.wait_for(tool.ainvoke(args), self._timeout))
+        except asyncio.TimeoutError:  # a stalled backend must not hang the whole run
+            return f"Error calling {name}: no response after {self._timeout:.0f}s. Use what you already have."
         except Exception as e:  # tool-side validation or transport errors go back to the model
             return f"Error calling {name}: {str(e)[:500]}"
 

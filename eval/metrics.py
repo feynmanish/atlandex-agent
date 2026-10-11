@@ -1,4 +1,14 @@
-"""Pure metric functions. Nothing here touches the network."""
+"""Pure metric functions. Nothing here touches the network.
+
+Two hit measures are kept apart on purpose and never merged into one number:
+
+- **video hit**: the answer cites at least one segment of a gold video.
+- **segment hit (±N s)**: the answer cites a segment whose start time lies inside a
+  gold span, widened by N seconds on each side (default 60).
+
+A video hit says the agent found the right video; it does not say the cited passage
+is the right one, so it is never reported as "task success".
+"""
 from __future__ import annotations
 
 import math
@@ -7,35 +17,30 @@ from typing import Any, Iterable
 
 
 def parse_segment_id(sid: str) -> tuple[str, int | None]:
+    """'abc@120' -> ('abc', 120); 'abc@na2' (unknown start) -> ('abc', None)."""
     video, _, rest = sid.partition("@")
     return video, int(rest) if rest.isdigit() else None
 
 
-def segment_matches(cited: str, gold: str, tolerance_sec: int = 0) -> bool:
-    """Does a cited segment ID count as the gold one?
+def video_hit(cited_ids: Iterable[str], gold_video_ids: Iterable[str]) -> bool:
+    gold = set(gold_video_ids)
+    return any(parse_segment_id(c)[0] in gold for c in cited_ids)
 
-    - exact match;
-    - a bare gold video ID (no '@') matches any segment of that video;
-    - otherwise the same video within `tolerance_sec` when both have a start time.
 
-    Passage start times shift with the question wording, and some passages have no
-    start time at all, so exact time matches alone would under-count correct answers.
+def segment_hit(cited_ids: Iterable[str], gold_spans: Iterable[dict[str, Any]], tolerance_sec: int = 60) -> bool:
+    """A cited segment hits if its start time is within [span.start - tol, span.end + tol].
+
+    A cited segment without a start time (`@na<rank>`) can never be a segment hit.
     """
-    if cited == gold:
-        return True
-    cv, cs = parse_segment_id(cited)
-    gv, gs = parse_segment_id(gold)
-    if cv != gv:
-        return False
-    if "@" not in gold:
-        return True
-    return bool(tolerance_sec) and cs is not None and gs is not None and abs(cs - gs) <= tolerance_sec
-
-
-def task_success(cited_ids: Iterable[str], gold_ids: Iterable[str], tolerance_sec: int = 0) -> bool:
-    """The answer cites at least one gold segment."""
-    gold = list(gold_ids)
-    return any(segment_matches(c, g, tolerance_sec) for c in cited_ids for g in gold)
+    spans = list(gold_spans)
+    for c in cited_ids:
+        video, start = parse_segment_id(c)
+        if start is None:
+            continue
+        for g in spans:
+            if g["video"] == video and g["start"] - tolerance_sec <= start <= g["end"] + tolerance_sec:
+                return True
+    return False
 
 
 def router_correct(route: str | None, expected: str | None) -> bool:
@@ -62,10 +67,11 @@ def _mean(xs: list[float]) -> float | None:
     return sum(xs) / len(xs) if xs else None
 
 
-def summarize(records: list[dict[str, Any]], tolerance_sec: int = 0) -> dict[str, Any]:
-    """Metrics for one group of records (one model, one source)."""
+def summarize(records: list[dict[str, Any]], tolerance_sec: int = 60) -> dict[str, Any]:
+    """Metrics for one group of records (one model, one source). Errored records count as misses."""
     ok = [r for r in records if not r.get("error")]
-    scored = [r for r in records if r.get("gold_segment_ids")]
+    with_video = [r for r in records if r.get("gold_video_ids")]
+    with_span = [r for r in records if r.get("gold_segments")]
     verdicts = [s["verdict"] for r in ok for s in (r.get("judge") or {}).get("sentences", [])]
     lat = [r["latency_sec"] for r in ok]
     u = lambda key: [r["usage"][key] for r in ok]  # noqa: E731
@@ -73,8 +79,12 @@ def summarize(records: list[dict[str, Any]], tolerance_sec: int = 0) -> dict[str
     return {
         "n": len(records),
         "errors": len(records) - len(ok),
-        "task_success": _mean([float(task_success(r.get("cited_ids", []), r["gold_segment_ids"], tolerance_sec))
-                               if not r.get("error") else 0.0 for r in scored]),
+        "video_hit_rate": _mean([float(not r.get("error") and video_hit(r.get("cited_ids", []), r["gold_video_ids"]))
+                                 for r in with_video]),
+        "segment_hit_rate": _mean([float(not r.get("error") and segment_hit(r.get("cited_ids", []), r["gold_segments"],
+                                                                            tolerance_sec))
+                                   for r in with_span]),
+        "segment_hit_n": len(with_span),
         "router_accuracy": _mean([float(router_correct(r.get("route"), r.get("expected_route"))) for r in ok
                                   if r.get("expected_route")]),
         "hallucination_rate": hallucination_rate(verdicts),
@@ -90,8 +100,12 @@ def summarize(records: list[dict[str, Any]], tolerance_sec: int = 0) -> dict[str
     }
 
 
-def aggregate(records: list[dict[str, Any]], tolerance_sec: int = 0) -> dict[str, Any]:
-    """Per model and source. Records with needs_review=True never enter headline numbers."""
+def aggregate(records: list[dict[str, Any]], tolerance_sec: int = 60) -> dict[str, Any]:
+    """Per model and source (existing / new_candidate kept apart).
+
+    Records with needs_review=True never enter the headline numbers; they are summarised
+    separately per model.
+    """
     groups: dict[tuple[str, str], list] = defaultdict(list)
     unverified: dict[str, list] = defaultdict(list)
     for r in records:

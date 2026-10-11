@@ -1,0 +1,138 @@
+{
+  "description": "Hand-labeled video RAG queries against production yt_vid_embeddings (Qwen3-Embedding-0.6B, chapter-bounded chunks). Binary relevance on chunk_index. Production retrieve k=3.",
+  "k": 3,
+  "queries": [
+    {
+      "videoid": "Burge5lagdM",
+      "title": "Vladimir Vapnik: Deep Learning and the Essence of Intelligence | AI Podcast Clips",
+      "question": "Can machines automatically discover good predicates the way Einstein did in physics?",
+      "relevant_chunk_ids": [0]
+    },
+    {
+      "videoid": "Burge5lagdM",
+      "title": "Vladimir Vapnik: Deep Learning and the Essence of Intelligence | AI Podcast Clips",
+      "question": "Is convolution a single translational-invariance predicate in neural networks?",
+      "relevant_chunk_ids": [1]
+    },
+    {
+      "videoid": "Burge5lagdM",
+      "title": "Vladimir Vapnik: Deep Learning and the Essence of Intelligence | AI Podcast Clips",
+      "question": "How does attention in language models relate to finding good predicates?",
+      "relevant_chunk_ids": [1]
+    },
+    {
+      "videoid": "Burge5lagdM",
+      "title": "Vladimir Vapnik: Deep Learning and the Essence of Intelligence | AI Podcast Clips",
+      "question": "Why prefer Hilbert space over piecewise-linear neural network functions?",
+      "relevant_chunk_ids": [2]
+    },
+    {
+      "videoid": "Burge5lagdM",
+      "title": "Vladimir Vapnik: Deep Learning and the Essence of Intelligence | AI Podcast Clips",
+      "question": "What is VC dimension and how do good predicates shrink the admissible function set?",
+      "relevant_chunk_ids": [3, 4]
+    },
+    {
+      "videoid": "Burge5lagdM",
+      "title": "Vladimir Vapnik: Deep Learning and the Essence of Intelligence | AI Podcast Clips",
+      "question": "Vladimir Propp's thirty-one narrative units that end in a wedding",
+      "relevant_chunk_ids": [5, 3]
+    },
+    {
+      "videoid": "Burge5lagdM",
+      "title": "Vladimir Vapnik: Deep Learning and the Essence of Intelligence | AI Podcast Clips",
+      "question": "Claude Lévi-Strauss criticism of structural narrative units",
+      "relevant_chunk_ids": [5]
+    },
+    {
+      "videoid": "Burge5lagdM",
+      "title": "Vladimir Vapnik: Deep Learning and the Essence of Intelligence | AI Podcast Clips",
+      "question": "MNIST digit recognition with sixty or fewer training examples",
+      "relevant_chunk_ids": [7]
+    },
+    {
+      "videoid": "Burge5lagdM",
+      "title": "Vladimir Vapnik: Deep Learning and the Essence of Intelligence | AI Podcast Clips",
+      "question": "Discover new predicates by finding contradictions the way physicists do",
+      "relevant_chunk_ids": [8]
+    },
+    {
+      "videoid": "Burge5lagdM",
+      "title": "Vladimir Vapnik: Deep Learning and the Essence of Intelligence | AI Podcast Clips",
+      "question": "Imitation versus understanding when recognizing handwritten digits",
+      "relevant_chunk_ids": [6]
+    },
+    {
+      "videoid": "4oq91rzQcO8",
+      "title": "Anthropic's Digital God, Pope vs AI, Job Loss Narrative Flips, Open Source Crackdown Coming?",
+      "question": "Bill Gurley's Running Down a Dream fellowship and rdad.org grants",
+      "relevant_chunk_ids": [1]
+    },
+    {
+      "videoid": "4oq91rzQcO8",
+      "title": "Anthropic's Digital God, Pope vs AI, Job Loss Narrative Flips, Open Source Crackdown Coming?",
+      "question": "Pope Leo XIV first encyclical on AI, about 235 pages",
+      "relevant_chunk_ids": [7]
+    },
+    {
+      "videoid": "4oq91rzQcO8",
+      "title": "Anthropic's Digital God, Pope vs AI, Job Loss Narrative Flips, Open Source Crackdown Coming?",
+      "question": "Amazon Google and Meta lobbied the Vatican to soften the AI encyclical",
+      "relevant_chunk_ids": [8]
+    },
+    {
+      "videoid": "4oq91rzQcO8",
+      "title": "Anthropic's Digital God, Pope vs AI, Job Loss Narrative Flips, Open Source Crackdown Coming?",
+      "question": "Leo XIII 1891 industrial-revolution encyclical versus later wages and poverty",
+      "relevant_chunk_ids": [10]
+    },
+    {
+      "videoid": "4oq91rzQcO8",
+      "title": "Anthropic's Digital God, Pope vs AI, Job Loss Narrative Flips, Open Source Crackdown Coming?",
+      "question": "Dr Frankenstein theory that Anthropic is midwifing a deity",
+      "relevant_chunk_ids": [11, 12, 13]
+    },
+    {
+      "videoid": "4oq91rzQcO8",
+      "title": "Anthropic's Digital God, Pope vs AI, Job Loss Narrative Flips, Open Source Crackdown Coming?",
+      "question": "Dario's Machines of Loving Grace and AI systems rewarding humans",
+      "relevant_chunk_ids": [12, 13]
+    },
+    {
+      "videoid": "4oq91rzQcO8",
+      "title": "Anthropic's Digital God, Pope vs AI, Job Loss Narrative Flips, Open Source Crackdown Coming?",
+      "question": "quis custodiet ipsos custodes: who guards the guardians in AI regulation",
+      "relevant_chunk_ids": [8, 9]
+    },
+    {
+      "videoid": "4oq91rzQcO8",
+      "title": "Anthropic's Digital God, Pope vs AI, Job Loss Narrative Flips, Open Source Crackdown Coming?",
+      "question": "Waterloo co-op recruiting more interns than full-time engineers",
+      "relevant_chunk_ids": [1]
+    },
+    {
+      "videoid": "ViqYWhLimGg",
+      "title": "Chip Stocks Crash, $20B Fund Margin Called, Frontier Labs: SLOW DOWN AI, Mamdani's Grocery Stores",
+      "question": "Leopold Aschenbrenner hedge fund margin call bought by Citadel Ken Griffin",
+      "relevant_chunk_ids": [0]
+    },
+    {
+      "videoid": "ViqYWhLimGg",
+      "title": "Chip Stocks Crash, $20B Fund Margin Called, Frontier Labs: SLOW DOWN AI, Mamdani's Grocery Stores",
+      "question": "Philadelphia Semiconductor Index chip stocks down more than twenty percent",
+      "relevant_chunk_ids": [0, 1]
+    },
+    {
+      "videoid": "ViqYWhLimGg",
+      "title": "Chip Stocks Crash, $20B Fund Margin Called, Frontier Labs: SLOW DOWN AI, Mamdani's Grocery Stores",
+      "question": "South Korea 1.2 million leveraged trading accounts hit with margin calls",
+      "relevant_chunk_ids": [5, 6]
+    },
+    {
+      "videoid": "ViqYWhLimGg",
+      "title": "Chip Stocks Crash, $20B Fund Margin Called, Frontier Labs: SLOW DOWN AI, Mamdani's Grocery Stores",
+      "question": "China installing a 582-ton superconducting magnet at a nuclear fusion center",
+      "relevant_chunk_ids": [12]
+    }
+  ]
+}

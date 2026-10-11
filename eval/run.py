@@ -45,15 +45,22 @@ def fmt(x: float | None, pct: bool = False, nd: int = 2) -> str:
 
 
 def summary_markdown(agg: dict[str, Any], results_dir: Path, args: argparse.Namespace) -> str:
-    head = "| model | source | n | task success | router acc. | hallucination | steps | latency p50/p95 (s) | tokens in/out | cost $ |"
-    sep = "|" + "---|" * 10
-    lines = [f"# Eval run {results_dir.name}", "", f"Command: `python -m eval.run --model {args.model}"
+    tol = args.gold_tolerance_sec
+    head = (f"| model | source | n | video hit | segment hit (±{tol} s) | router acc. | hallucination | steps | "
+            "latency p50/p95 (s) | tokens in/out | cost $ |")
+    sep = "|" + "---|" * 11
+    lines = [f"# Eval run {results_dir.name}", "",
+             f"Command: `python -m eval.run --model {args.model}"
              f"{' --subset ' + str(args.subset) if args.subset else ''}`", "",
+             "*Video hit* = the answer cites a segment of a gold video. *Segment hit* = it cites a segment whose start "
+             f"is inside a gold span (±{tol} s). They are different measures; neither is called task success.", "",
              "## Headline (needs_review records excluded)", "", head, sep]
 
     def row(key: str, s: dict) -> str:
         m, src = key.split("|")
-        return (f"| {m} | {src} | {s['n']} | {fmt(s['task_success'], True)} | {fmt(s['router_accuracy'], True)} | "
+        seg = f"{fmt(s['segment_hit_rate'], True)} (n={s['segment_hit_n']})"
+        return (f"| {m} | {src} | {s['n']} | {fmt(s['video_hit_rate'], True)} | {seg} | "
+                f"{fmt(s['router_accuracy'], True)} | "
                 f"{fmt(s['hallucination_rate'], True)} ({s['judged_sentences']} sent.) | {fmt(s['steps_mean'], nd=1)} | "
                 f"{fmt(s['latency_p50'], nd=1)} / {fmt(s['latency_p95'], nd=1)} | "
                 f"{fmt(s['prompt_tokens_mean'], nd=0)} / {fmt(s['completion_tokens_mean'], nd=0)} | "
@@ -89,7 +96,8 @@ async def amain(args: argparse.Namespace) -> int:
             for which in models:
                 llm = client.bind(settings.model_for(which))
                 rec: dict[str, Any] = {k: row.get(k) for k in
-                                       ("id", "question", "gold_segment_ids", "expected_route", "source", "needs_review")}
+                                       ("id", "question", "gold_video_ids", "gold_segments", "expected_route",
+                                        "source", "needs_review", "verified_by")}
                 rec["model_alias"] = which
                 try:
                     res = await run_agent(row["question"], llm, tools, settings)
