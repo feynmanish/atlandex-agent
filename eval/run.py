@@ -47,20 +47,22 @@ def fmt(x: float | None, pct: bool = False, nd: int = 2) -> str:
 
 def summary_markdown(agg: dict[str, Any], results_dir: Path, args: argparse.Namespace) -> str:
     tol = args.gold_tolerance_sec
-    head = (f"| model | source | n | video hit | segment hit (±{tol} s) | router acc. | hallucination | steps | "
+    head = (f"| model | source | runs ok/total | video hit | segment hit (±{tol} s) | router acc. | hallucination | steps | "
             "latency p50/p95 (s) | tokens in/out | cost $ |")
     sep = "|" + "---|" * 11
     lines = [f"# Eval run {results_dir.name}", "",
              f"Command: `python -m eval.run --model {args.model}"
              f"{' --subset ' + str(args.subset) if args.subset else ''}`", "",
              "*Video hit* = the answer cites a segment of a gold video. *Segment hit* = it cites a segment whose start "
-             f"is inside a gold span (±{tol} s). They are different measures; neither is called task success.", "",
+             f"is inside a gold span (±{tol} s). They are different measures; neither is called task success. "
+             "Rates are over completed runs; runs that failed because the free model stayed unavailable are "
+             "shown in *runs ok/total*, not counted as misses.", "",
              "## Headline (needs_review records excluded)", "", head, sep]
 
     def row(key: str, s: dict) -> str:
         m, src = key.split("|")
         seg = f"{fmt(s['segment_hit_rate'], True)} (n={s['segment_hit_n']})"
-        return (f"| {m} | {src} | {s['n']} | {fmt(s['video_hit_rate'], True)} | {seg} | "
+        return (f"| {m} | {src} | {s['completed']}/{s['n']} | {fmt(s['video_hit_rate'], True)} | {seg} | "
                 f"{fmt(s['router_accuracy'], True)} | "
                 f"{fmt(s['hallucination_rate'], True)} ({s['judged_sentences']} sent.) | {fmt(s['steps_mean'], nd=1)} | "
                 f"{fmt(s['latency_p50'], nd=1)} / {fmt(s['latency_p95'], nd=1)} | "

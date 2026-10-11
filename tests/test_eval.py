@@ -114,8 +114,9 @@ def test_summarize_computes_each_headline_metric():
     s = summarize([rec(), rec(cited=("x@1",), route="multi_step", verdicts=("unsupported", "supported")),
                    rec(error="boom")])
     assert s["n"] == 3 and s["errors"] == 1
-    assert s["video_hit_rate"] == pytest.approx(1 / 3)  # the errored record counts as a miss
-    assert s["segment_hit_rate"] == pytest.approx(1 / 3) and s["segment_hit_n"] == 3
+    assert s["completed"] == 2
+    assert s["video_hit_rate"] == pytest.approx(1 / 2)  # the outage-failed run is not scored as a miss
+    assert s["segment_hit_rate"] == pytest.approx(1 / 2) and s["segment_hit_n"] == 2
     assert "task_success" not in s
     assert s["router_accuracy"] == pytest.approx(1 / 2)
     assert s["hallucination_rate"] == pytest.approx(1 / 3)
@@ -209,3 +210,13 @@ def test_sample_for_labels_hides_the_verdict_and_skips_unreviewed(tmp_path, monk
     assert "S1" in text and "S3" not in text and "S2" not in text
     assert "supported" not in text.replace("reference_label", "")  # verdict lives in the other file
     assert "judge_verdict" in (tmp_path / "labels" / "judge_verdicts.csv").read_text()
+
+
+def test_resume_merge_keeps_finished_records_when_only_a_subset_is_rerun():
+    from eval.run import merge_records
+    ds = [{'id': 'a'}, {'id': 'b'}]
+    kept = {('a', 'small'): {'id': 'a', 'model_alias': 'small', 'x': 1}, ('b', 'large'): {'id': 'b', 'model_alias': 'large'}}
+    new = [{'id': 'b', 'model_alias': 'small', 'x': 2}, {'id': 'a', 'model_alias': 'small', 'x': 9}]
+    out = merge_records(kept, new, ds)
+    assert [(r['id'], r['model_alias']) for r in out] == [('a', 'small'), ('b', 'small'), ('b', 'large')]
+    assert out[0]['x'] == 9  # a re-run record replaces the old one

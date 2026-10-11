@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
 import json
 import logging
 from pathlib import Path
@@ -14,6 +15,7 @@ from pathlib import Path
 from atlandex_agent.config import Settings
 from atlandex_agent.llm import LLMError, LLMUnavailable, OpenRouterClient
 
+from .agreement import LABELS_DIR
 from .judge import judge_answer
 
 
@@ -24,10 +26,16 @@ async def amain(args: argparse.Namespace) -> None:
     results = Path(args.results)
     out = results / f"judge_{args.name}.jsonl"
     done = 0
+    only = None
+    if args.labelled_only:  # just the answers behind the rows in eval/labels (saves free-tier requests)
+        with (LABELS_DIR / "judge_verdicts.csv").open(encoding="utf-8", newline="") as vf:
+            only = {(row["record_id"], row["model"]) for row in csv.DictReader(vf)}
     with out.open("w", encoding="utf-8") as f:
         for line in (results / "records.jsonl").read_text(encoding="utf-8").splitlines():
             r = json.loads(line)
             if r.get("error") or r.get("clarification"):
+                continue
+            if only is not None and (r["id"], r["model"]) not in only:
                 continue
             try:
                 j = await judge_answer(llm, r["answer"], r["segments"])
@@ -47,6 +55,8 @@ def main() -> None:
     p.add_argument("--results", required=True)
     p.add_argument("--judge-model", required=True)
     p.add_argument("--name", required=True)
+    p.add_argument("--labelled-only", action="store_true",
+                   help="only re-judge the answers that contain rows of eval/labels/judge_verdicts.csv")
     args = p.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(message)s")
     asyncio.run(amain(args))

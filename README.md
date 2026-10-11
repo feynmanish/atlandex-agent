@@ -1,8 +1,8 @@
 # atlandex-agent
 
-A [LangGraph](https://langchain-ai.github.io/langgraph/) agent that answers questions about long-form video by calling the three tools of [`atlandex-mcp`](https://github.com/feynmanish/atlandex-mcp) (`find_videos`, `search_video`, `locate_quote`), plus an evaluation harness that measures task success, router accuracy and hallucination rate with an LLM judge. All models run through [OpenRouter](https://openrouter.ai), on free `:free` models by default.
+A [LangGraph](https://langchain-ai.github.io/langgraph/) agent that answers questions about long-form video by calling the three tools of [`atlandex-mcp`](https://github.com/feynmanish/atlandex-mcp) (`find_videos`, `search_video`, `locate_quote`), plus an evaluation harness that measures video hit, segment hit (±60 s), router accuracy and hallucination rate with an LLM judge. All models run through [OpenRouter](https://openrouter.ai), on free `:free` models by default.
 
-**Status:** the agent and the eval code are finished and tested offline. The full evaluation has not been run yet, so there are no results below. See [Results](#results).
+**Status:** the agent, the eval and one full free-model evaluation are done; see [Results](#results). The judge was validated against reference labels from Claude, not against human labels.
 
 ## How it works
 
@@ -66,17 +66,23 @@ Prints the answer, the citation links, route, steps, latency, tokens and cost. `
 ## Run the eval
 
 ```bash
-python -m eval.run --model both --subset 5 --include-review   # 5-query trial
-python -m eval.run --model both                                # full run (verified records only)
-python -m eval.sample_for_labels --n 30                        # writes eval/labels/to_label.csv
-python -m eval.agreement                                       # judge vs your labels, after you fill human_label
+python -m eval.run --model both --subset 5 --include-review    # 5-query trial
+python -m eval.run --model both --include-review               # full run: 22 existing + 10 new candidates, both models
+python -m eval.run --resume eval/results/<run> --model both --include-review   # re-run only the runs that errored
+python -m eval.summarize eval/results/<run>                    # rebuild summary.json/md from records.jsonl
+python -m eval.sample_for_labels --n 30 --stratify             # eval/labels/to_label.csv (no verdicts) + judge_verdicts.csv
+python -m eval.agreement                                       # main judge vs the reference labels
+python -m eval.rejudge --results eval/results/<run> --judge-model <id> --name <short> --labelled-only
+python -m eval.agreement --alt-judge eval/results/<run>/judge_<short>.jsonl
 ```
 
-- `eval/dataset.jsonl`: one record per query: `id`, `question`, `gold_segment_ids`, `expected_route`, `source` (`existing` | `new_candidate`), `needs_review`. Import your existing set with `python -m eval.import_existing PATH`.
-- `needs_review: true` records are skipped unless `--include-review` is given, and never enter the headline numbers.
-- A cited segment counts as gold if it matches exactly, if the gold entry is a bare video ID and the video matches, or if it is in the same video within `--gold-tolerance-sec` (default 60) of a timed gold entry.
+- `eval/dataset.jsonl`, one record per query: `id`, `question`, `gold_video_ids`, `gold_segments` (`{video, start, end}` in seconds), `gold_basis`, `expected_route`, `source` (`existing` | `new_candidate`), `needs_review`, `verified_by`.
+- **`existing`**: the 22 hand-labelled retrieval queries from the project's own earlier retrieval eval (3 videos). Their gold labels are chunk indices, mapped to time spans with `eval/chunk_map.py` (56 observations, no ordering violations; see [DECISIONS.md](DECISIONS.md)). **`new_candidate`**: 10 multi-step questions drafted for this repo; 7 pass a check by Claude (`verified_by: claude`), 3 do not and stay `needs_review: true`.
+- Two hit measures, kept separate and never merged: **video hit** (the answer cites a segment of a gold video) and **segment hit (±60 s)** (it cites a segment whose start lies inside a gold span, widened by 60 s on each side). Video hit is not task success: it only says the right video was found. A segment without a start time can never be a segment hit.
+- Rates are over completed runs. A run that failed because the free model stayed unavailable after 6 retries shows up in *runs ok/total* and is not counted as a miss.
+- `needs_review: true` records run only with `--include-review` and are always listed apart from the headline numbers.
 - Each run writes `eval/results/<timestamp>/`: `records.jsonl` (full answers, tool calls, retrieved and cited IDs, tokens, cost; not committed), `summary.json` and `summary.md`.
-- Metrics: task success (cites a gold segment), router accuracy, hallucination rate (share of answer sentences the judge marks unsupported by their cited text), steps, latency p50/p95, tokens and cost per query. The judge prompt is [`eval/judge_prompt.md`](eval/judge_prompt.md).
+- Other metrics: router accuracy, hallucination rate (share of answer sentences the judge marks unsupported by their cited text), steps, latency p50/p95, tokens and cost. The judge prompt is [`eval/judge_prompt.md`](eval/judge_prompt.md).
 
 ## Observability
 
@@ -104,21 +110,47 @@ All tests run offline with a fake LLM, a fake toolbox and a mock HTTP transport:
 
 ## Results
 
-Pending. No evaluation run has been made, so no numbers are reported here. The table will be filled only from a `summary.json` produced by `python -m eval.run`, and will cite that file.
+Source: [`eval/results/20261011-125600/summary.json`](eval/results/20261011-125600/summary.json) (rendered in `summary.md`), one run, free models only, paid spend $0.00. The agent was run twice per query, once with each model; the judge is `nvidia/nemotron-3-super-120b-a12b:free`. Hit rates are over completed runs (*ok/total* shows how many runs finished). Read these as a small-sample snapshot, not a ranking: 22 and 7 queries.
 
-| model | source | n | task success | router acc. | hallucination | steps | latency p50/p95 | cost |
-|---|---|---|---|---|---|---|---|---|
-| pending | | | | | | | | |
+**Existing 22 queries** (hand-labelled retrieval probes, each naming its video, so video hit is close to guaranteed by construction; segment hit is the informative number)
 
-**Judge validation:** not yet labelled. `eval/labels/to_label.csv` has to be filled in by hand, then `python -m eval.agreement` reports agreement and Cohen's kappa.
+| model | runs ok/total | video hit | segment hit (±60 s) | router acc. | hallucination (judge, upper bound) | steps (mean) | latency p50 / p95 (s) |
+|---|---|---|---|---|---|---|---|
+| nemotron-3-super-120b (large) | 22/22 | 82% | 82% | 86% | 41% (27 judged sentences) | 1.5 | 33.5 / 62.9 |
+| laguna-xs-2.1 (small) | 22/22 | 82% | 77% | 82% | 39% (57 judged sentences) | 1.7 | 53.4 / 132.9 |
+
+**New multi-step questions, the 7 verified by Claude** (comparison and find-then-follow-up questions; segment gold is single start times of passages Claude judged relevant)
+
+| model | runs ok/total | video hit | segment hit (±60 s) | router acc. | hallucination (judge, upper bound) | steps (mean) | latency p50 / p95 (s) |
+|---|---|---|---|---|---|---|---|
+| nemotron-3-super-120b (large) | 7/7 | 71% | 57% | 100% | 78% (9 judged sentences) | 5.0 | 89.6 / 141.8 |
+| laguna-xs-2.1 (small) | **2/7** | 50% (n=2) | 50% (n=2) | 100% | 40% (10 judged sentences) | 6.0 | 123.1 / 163.6 |
+
+The small model's 5 missing runs are upstream HTTP 429 outages (it was retried in three passes; I stopped to keep the daily free quota), so its multi-step row rests on 2 queries and says almost nothing. The 3 candidates that failed Claude's check (`nc01`, `nc07`, `nc08`) ran too but are not in the headline: large 3/3 completed, small 1/3.
+
+Cost: $0.00 (free models). Mean tokens per completed run, existing set: large 5,129 in / 1,785 out, small 4,940 in / 970 out.
+
+How to read the hallucination column: the judge over-flags (see below), 24 of the 44 sentences it flagged cited nothing at all, and 27 sentences got no verdict and are excluded. In the 30-row validation sample the judge's flags were right 9 times out of 15, so the true rate under the reference rubric is probably well below these numbers. Treat them as an upper bound.
+
+### Judge validation
+
+**Validated against reference labels from a stronger model (Claude), not human labels.** Claude (Sonnet 5.5) labelled 30 judged answer sentences against the rubric in `eval/judge_prompt.md` before looking at any judge verdict; the sample is stratified (half from sentences the judge flagged, half from the rest), so agreement is not the judge's accuracy on the natural mix. Labels: [`eval/labels/to_label.csv`](eval/labels/to_label.csv); verdicts: `judge_verdicts.csv`.
+
+| judge | rows | agreement with reference | Cohen's kappa | notes |
+|---|---|---|---|---|
+| main: nemotron-3-super-120b:free | 30 | 80.0% | 0.60 | caught 9 of 9 reference-unsupported sentences, 6 false alarms (flagged 15, reference says 9) |
+| alternative: cohere/north-mini-code:free | 25 | 76.0% | 0.53 | answers behind 5 rows were not re-judged |
+| main vs alternative | 55 sentences | 92.7% | 0.85 | the 22 re-judged answers only |
+
+So the main judge is usable but strict: it rarely misses an unsupported claim and often flags a supported one.
 
 ## Limitations
 
-- The eval set is small (22 existing queries plus 10 new ones), so differences of a few points are noise.
-- The 10 new multi-step questions are unverified candidates (`needs_review: true`) and are reported separately from the headline numbers.
-- The hallucination rate comes from an LLM judge whose agreement with human labels has not been measured yet. Until it is, treat the number as indicative.
-- The "small" model is a ~3B-active MoE, not a 7-14B model; no free tool-calling model of that size exists on OpenRouter.
-- Free models are rate-limited and intermittently unavailable; runs can take over an hour and some queries may fail and need re-running.
-- Segment IDs are derived, and passage start times shift with the question wording or are missing, so gold matching is looser than an exact segment match (see above).
-- Task success only requires citing one gold segment; it does not check that the answer is complete or correct beyond what the judge sees.
-- `find_videos` matches index terms, not names; questions about a person who is not an indexed term cost the agent extra steps.
+- The eval set is small (22 existing queries, 7 verified new ones), so differences of a few points are noise. The small model has only 2 completed multi-step runs.
+- The existing set's gold labels are chunk indices, mapped to time spans by inference (consistent across 56 observations, but not read from the database). Some spans are narrow, so segment hit can under-count there. Its questions name the video, so it measures citing the right passage, not finding the video.
+- The 7 verified candidates were checked by Claude, not by a human, and their segment gold comes from the same retrieval the agent uses. Three candidates failed that check and are excluded from the headline.
+- The judge's agreement was measured against Claude's labels on 30 stratified rows. Both are LLMs and the labeller wrote the rubric, so this is a consistency check, not human ground truth.
+- The "small" model is a ~3B-active MoE, not a 7-14B model; no free tool-calling model of that size exists on OpenRouter. Free models are rate-limited and intermittently down: a full run took about 1.5 hours and needed several re-run passes, and some runs still failed.
+- Passage start times move with the question wording, and a minority of passages come back with no start time (0.5% to 7% in three samples, higher in an earlier ad-hoc one), which can never be a segment hit.
+- `find_videos` matches index terms, not names, so questions about a person who is not an indexed term cost the agent steps (9 completed runs used all 6). These are atlandex-mcp findings, not fixed here; see [DECISIONS.md](DECISIONS.md).
+- The Langfuse `task_success` score (added with the tracing) is the segment-hit measure above; it is not video hit.

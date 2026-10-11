@@ -15,4 +15,4 @@ dist/
 .cache/
 
 # Raw per-query results hold full answers and can be large; summaries are kept.
-eval/results/*/records.jsonl
+eval/results/*/records.jsonl*
