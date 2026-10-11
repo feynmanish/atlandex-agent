@@ -68,21 +68,25 @@ def _mean(xs: list[float]) -> float | None:
 
 
 def summarize(records: list[dict[str, Any]], tolerance_sec: int = 60) -> dict[str, Any]:
-    """Metrics for one group of records (one model, one source). Errored records count as misses."""
+    """Metrics for one group of records (one model, one source).
+
+    Every rate is over *completed* runs. A run that failed because the free model stayed
+    unavailable after all retries (`error` set) is counted in `errors`, not as a miss: an
+    outage says nothing about whether the agent would have found the right passage.
+    """
     ok = [r for r in records if not r.get("error")]
-    with_video = [r for r in records if r.get("gold_video_ids")]
-    with_span = [r for r in records if r.get("gold_segments")]
+    with_video = [r for r in ok if r.get("gold_video_ids")]
+    with_span = [r for r in ok if r.get("gold_segments")]
     verdicts = [s["verdict"] for r in ok for s in (r.get("judge") or {}).get("sentences", [])]
     lat = [r["latency_sec"] for r in ok]
     u = lambda key: [r["usage"][key] for r in ok]  # noqa: E731
     judge_cost = sum(((r.get("judge") or {}).get("usage") or {}).get("cost_usd", 0.0) for r in ok)
     return {
         "n": len(records),
+        "completed": len(ok),
         "errors": len(records) - len(ok),
-        "video_hit_rate": _mean([float(not r.get("error") and video_hit(r.get("cited_ids", []), r["gold_video_ids"]))
-                                 for r in with_video]),
-        "segment_hit_rate": _mean([float(not r.get("error") and segment_hit(r.get("cited_ids", []), r["gold_segments"],
-                                                                            tolerance_sec))
+        "video_hit_rate": _mean([float(video_hit(r.get("cited_ids", []), r["gold_video_ids"])) for r in with_video]),
+        "segment_hit_rate": _mean([float(segment_hit(r.get("cited_ids", []), r["gold_segments"], tolerance_sec))
                                    for r in with_span]),
         "segment_hit_n": len(with_span),
         "router_accuracy": _mean([float(router_correct(r.get("route"), r.get("expected_route"))) for r in ok

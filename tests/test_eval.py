@@ -114,8 +114,9 @@ def test_summarize_computes_each_headline_metric():
     s = summarize([rec(), rec(cited=("x@1",), route="multi_step", verdicts=("unsupported", "supported")),
                    rec(error="boom")])
     assert s["n"] == 3 and s["errors"] == 1
-    assert s["video_hit_rate"] == pytest.approx(1 / 3)  # the errored record counts as a miss
-    assert s["segment_hit_rate"] == pytest.approx(1 / 3) and s["segment_hit_n"] == 3
+    assert s["completed"] == 2
+    assert s["video_hit_rate"] == pytest.approx(1 / 2)  # the outage-failed run is not scored as a miss
+    assert s["segment_hit_rate"] == pytest.approx(1 / 2) and s["segment_hit_n"] == 2
     assert "task_success" not in s
     assert s["router_accuracy"] == pytest.approx(1 / 2)
     assert s["hallucination_rate"] == pytest.approx(1 / 3)
