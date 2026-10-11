@@ -48,6 +48,56 @@ Running log of choices, deviations from the task spec, and problems hit. Newest 
 - **Uncited sentences count as unsupported** by the judge ("makes a factual claim while citing nothing"). In the final run, 24 of the 44 sentences the judge flagged unsupported (in completed headline runs) cited nothing.
 - **Eval records** are in `eval/results/<run>/records.jsonl` (full answers; not committed); `summary.json`, `summary.md` and `judge_north-mini.jsonl` are committed for the run reported in the README. `python -m eval.summarize` rebuilds the summary from the records without calling a model.
 
+## Judge coverage (measured 2026-10-11)
+
+Source: the four `eval/results/20261011-12*` runs (`eval.run`, current code), de-duplicated so each (query, agent model) counts once, latest run wins. Free judge `nvidia/nemotron-3-super-120b-a12b:free`, `max_tokens` 1500. Answers that never reached the judge (clarifications, the fixed "no coverage" reply, errored runs) are excluded.
+
+| agent model | answers judged | answers with unjudged sentences | sentences | unjudged sentences |
+|---|---|---|---|---|
+| `poolside/laguna-xs-2.1:free` | 10 | 2 (20%) | 43 | 11 (26%) |
+| `nvidia/nemotron-3-super-120b-a12b:free` | 13 | 2 (15%) | 28 | 8 (29%) |
+| all | 23 | 4 (17%) | 71 | 19 (27%) |
+
+Far above the 10% line. A later snapshot, taken while the other session's run was still adding records (`existing` queries only, new summary code), gives the same picture: 25% of 32 sentences unjudged for `nemotron` as agent model (2 of 15 answers) and 24% of 46 for `laguna` (2 of 11). Facts behind it:
+
+- **Failure is all-or-nothing per answer:** all 4 affected answers were fully unjudged (no sentence got a verdict).
+- **Cause is the token budget, not the output format.** In all 4 cases the judge made 2 calls with exactly 3000 completion tokens, i.e. 2 x the 1500 cap. Successful judgements took one call and about 1100 tokens, so they sit close to the cap. In the response cache (which does not record the role), 15 replies of any role used the whole 1500 tokens: 5 were judge replies that are valid JSON cut off mid-array, 8 had empty content (consistent with a reasoning model spending its whole budget, but the role is not recorded, so I cannot say they were all judge calls) and 2 were something else. 45 of 50 judge-shaped replies in the cache finished under the cap.
+- **The retry cannot help:** it resends the identical request at temperature 0 (and the on-disk cache returns the identical reply), so it fails the same way.
+- **Longer answers fail more** (5.0 sentences on average for unjudged answers vs 3.0 for judged ones), so the missing verdicts are not random: dropping them biases the hallucination rate down.
+- A paid judge is **not** needed: the free model can do the job when it has room. For reference only: at the documented paid prices ($0.08 / $0.45 per M tokens) one judgement (~820 in / ~1100 out) costs about $0.0006, so 64 answers would be about $0.04 (about $0.12 even at a 4000-token ceiling). `ALLOW_PAID` stays false, and the key has a $0 cap anyway.
+
+Reporting rule (implemented in `eval/metrics.py`, `eval/run.py`, README): an `unjudged` sentence is never counted as clean. The hallucination rate is on judged sentences only and is `n/a` when none were judged; the summary shows the unjudged share (sentences and answers), an upper bound counting unjudged as unsupported, and a warning above 10%. Langfuse gets an `unjudged_share` score and no `hallucination_rate` score for a fully unjudged answer.
+
+## Plan: three fixes, NOT implemented yet (waiting for the eval session to finish)
+
+Another session is running `eval.run` in the same folder, so no agent code is touched until that is confirmed finished. Order: 3 first (it makes existing results usable), then 1 and 2 (they change agent behaviour, so results before and after are not comparable and must not be mixed in one table).
+
+### 1. YouTube URL in the question -> video ID
+
+- **Evidence:** all 22 `existing` queries contain a `youtube.com/watch?v=` URL. In trace `ex03` the agent spent 3 `find_videos` calls (two returned 0 matches) and about 25 s before it called `search_video` on a video ID that was already in the question.
+- **Change:** a small pure function `video_ids_in(question)` (regex for `watch?v=`, `youtu.be/`, `shorts/`; 11-character IDs). In the graph, when it finds IDs, run `search_video(video=<id>, question=<question without the URL>)` once before the agent loop, and add the result to the evidence like any tool call (it counts as a step, is traced, and its segments are citable). The agent loop then continues as before, so comparison questions can still search further. If the tool says the video is not searchable or returns an error, nothing special happens: the agent proceeds with `find_videos` as today.
+- **Not done:** no hard skip of the agent for URL questions, and no change to `find_videos`.
+- **Tests:** ID extraction (the 3 URL shapes, extra query params, no URL, two URLs); pre-seeded step appears in `tool_calls` and `segments`; non-searchable video falls through; offline with the fake toolbox.
+- **Check:** re-run the 22 `existing` queries on both models; expect fewer steps and lower latency, video hit not worse.
+
+### 2. Done-signal for the final agent turn
+
+- **Evidence:** the "reply READY" turn is where the model writes a full answer instead: its completion tokens have median 713 (p90 1455, max 1500) vs median 196 for tool-call turns; 18 of 25 final turns are over 300 tokens; it is about 17% of total latency. In trace `ex03` it took 49.8 s and 1226 tokens, and the text is thrown away.
+- **Change:** (a) a per-call `max_tokens` on `LLM.chat` (shared with fix 3); agent turns get a cap of 600 (observed tool-call turns: p90 461, max 588; hidden reasoning counts toward it, so not lower). (b) Prompt: "When you have enough evidence, call the `finish` tool" and offer a no-argument `finish()` tool next to the MCP tools; any reply with no tool call is treated as finished (as today). The cap bounds the cost either way; the tool gives a structured signal instead of a text convention.
+- **Risk:** a tool call truncated by the cap would be lost. Mitigation: if the finish reason is length with no parseable call, treat it as done (and note it), never retry with a bigger cap.
+- **Tests:** READY text, `finish` call, prose reply and truncated reply all end the loop; the cap is passed; the `finish` call is not counted as a step and not offered to the answer node.
+- **Check:** re-run; expect final-turn tokens mostly under 100 and latency down by about the 17% above.
+
+### 3. Judge coverage
+
+- **Change:** (a) per-call `max_tokens` for the judge: 4000 (the replies that finished needed about 1100; the empty ones were reasoning). (b) Make the second attempt different: if the first reply is cut off or empty, retry only the sentences that got no verdict, in batches of at most 3, so the retry is a smaller task and a different request (also bypasses the cache hit). (c) Shorter output: reasons of at most 12 words, and in the prompt "reason only for unsupported". (d) Ask the provider to turn reasoning down only if OpenRouter documents it for this model; not assumed.
+- **Not chosen:** a paid judge (not needed, see above); another free judge model (the cause is budget, not capability; `eval/rejudge.py` stays available for a second opinion).
+- **Existing results:** add `--only-unjudged` to `eval.rejudge`, which re-judges just the answers with unjudged sentences and writes the new verdicts into a sidecar file; merging into `records.jsonl` is a separate, explicit step so finished records are never rewritten silently.
+- **Tests:** a judge fake that truncates on the first call and succeeds on the batched retry; the cap is passed; still `unjudged` (not `supported`) if the retry also fails.
+- **Done when:** unjudged sentences are at or below 10% on a re-run of the current records (target: near 0), otherwise report the remaining share as is.
+
+## Problems hit
+
 ## The existing 22-query set (Phase 2)
 
 - **Source.** `feynmanish/Merchs`, but **not as committed code on `alef`**. The files are untracked in the working tree of the local clone `C:\Users\DTCSP\Merchs` (branch `footnotes-pilot`, HEAD `f4157715b4f0bf85fa8a3b6822ca0594bbbc69f2`) and are also in a stash on `alef`: `stash@{0}` = `d190d813daa3c11c184bb7f08e51cb9a964ad6b5` ("wip other files during ci push", 2026-09-08), base commit `23a9b48c6113d9b5216d1d9000dccf377666ad54`, untracked-files commit `774aec7803a7bee5d0138a6dcf2e50f94509e462`. The stashed and working-tree copies of the query set are identical apart from line endings. The tip of `alef` (`6107096ba335d950fd57286d2159f930d3d1bbd9`, the same as a fresh clone of `origin/alef`) does not contain them, and no commit on any branch ever did (`git log --all` finds none). I read them with `git show`/`git grep` and plain reads; nothing in Merchs was modified or checked out.

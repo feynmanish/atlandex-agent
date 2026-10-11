@@ -8,8 +8,9 @@ from atlandex_agent.citations import drop_unsupported, unsupported_ids
 from atlandex_agent.segments import extract_citations, parse_tool_output, segment_id, split_sentences
 from eval import agreement, sample_for_labels
 from eval.judge import answer_sentences, build_judge_input, judge_answer
-from eval.metrics import (aggregate, hallucination_rate, percentile, router_correct, segment_hit,
-                          summarize, video_hit)
+from eval.metrics import (aggregate, hallucination_rate, judge_coverage, percentile, router_correct,
+                          segment_hit, summarize, video_hit)
+from eval.run import send_scores, summary_markdown
 from fakes import FakeLLM, VID_A, search_json
 
 A = f"{VID_A}@120"
@@ -121,6 +122,79 @@ def test_summarize_computes_each_headline_metric():
     assert s["router_accuracy"] == pytest.approx(1 / 2)
     assert s["hallucination_rate"] == pytest.approx(1 / 3)
     assert s["steps_mean"] == 2 and s["latency_p50"] == 2.0
+
+
+def test_judge_coverage_counts_unjudged_answers_and_sentences():
+    c = judge_coverage([["supported", "unsupported"], ["unjudged", "unjudged", "unjudged"],
+                        ["supported", "unjudged"]])
+    assert c["judge_answers"] == 3 and c["answers_fully_unjudged"] == 1 and c["answers_partly_unjudged"] == 1
+    assert c["unjudged_answer_share"] == pytest.approx(2 / 3)
+    assert c["judge_sentences"] == 7 and c["unjudged_sentences"] == 4
+    assert c["unjudged_sentence_share"] == pytest.approx(4 / 7)
+    # the upper bound counts every unjudged sentence as unsupported: (1 unsupported + 4 unjudged) / 7
+    assert c["hallucination_rate_upper_bound"] == pytest.approx(5 / 7)
+
+
+def test_judge_coverage_with_nothing_sent_to_the_judge_is_none_not_zero():
+    c = judge_coverage([])
+    assert c["unjudged_sentence_share"] is None and c["hallucination_rate_upper_bound"] is None
+
+
+def test_fully_unjudged_answers_are_never_counted_as_clean():
+    s = summarize([rec(verdicts=("unjudged", "unjudged"))])
+    assert s["hallucination_rate"] is None  # not 0%
+    assert s["hallucination_rate_upper_bound"] == 1.0
+    assert s["unjudged_sentence_share"] == 1.0 and s["answers_fully_unjudged"] == 1 and s["judged_sentences"] == 0
+
+
+def test_summarize_reports_partial_coverage_next_to_the_rate():
+    s = summarize([rec(verdicts=("supported", "unsupported", "unjudged", "unjudged"))])
+    assert s["hallucination_rate"] == pytest.approx(1 / 2)  # judged sentences only
+    assert s["hallucination_rate_upper_bound"] == pytest.approx(3 / 4)
+    assert s["unjudged_sentence_share"] == pytest.approx(1 / 2) and s["answers_partly_unjudged"] == 1
+
+
+class _Args:
+    gold_tolerance_sec = 60
+    model = "small"
+    subset = None
+
+
+def test_summary_markdown_states_the_unjudged_share_and_warns_above_ten_percent(tmp_path):
+    weak = summary_markdown(aggregate([rec(verdicts=("supported", "unjudged"))]), tmp_path, _Args())
+    assert "50% of 2 sent., 1 of 1 ans." in weak
+    assert "<= 50% if unjudged were unsupported" in weak
+    assert "Judge coverage warning" in weak
+    full = summary_markdown(aggregate([rec(verdicts=("supported",) * 20)]), tmp_path, _Args())
+    assert "0% of 20 sent., 0 of 1 ans." in full and "Judge coverage warning" not in full
+
+
+class _Scores:
+    def __init__(self):
+        self.sent = {}
+
+    def score(self, trace_id, name, value, comment=None):
+        self.sent[name] = (value, comment)
+
+
+def test_langfuse_scores_never_give_an_unjudged_answer_a_clean_hallucination_score():
+    r = rec(verdicts=("unjudged", "unjudged"))
+    r["trace_id"] = "t" * 32
+    t = _Scores()
+    send_scores(t, r, 60)
+    assert "hallucination_rate" not in t.sent  # absent, not 0.0
+    assert t.sent["unjudged_share"][0] == 1.0
+
+
+def test_langfuse_hallucination_score_mentions_unjudged_sentences_it_left_out():
+    r = rec(verdicts=("supported", "unsupported", "unjudged"))
+    r["judge"]["sentences"][1].update(text="Bad claim.", reason="not in passage")
+    r["trace_id"] = "t" * 32
+    t = _Scores()
+    send_scores(t, r, 60)
+    value, comment = t.sent["hallucination_rate"]
+    assert value == pytest.approx(1 / 2) and "1 of 3 sentences unjudged" in comment
+    assert t.sent["unjudged_share"][0] == pytest.approx(1 / 3)
 
 
 def test_needs_review_records_never_enter_the_headline():

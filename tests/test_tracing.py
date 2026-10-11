@@ -223,11 +223,12 @@ def test_scores_use_the_trace_id_and_project_definitions(live):
     }
     send_scores(tracer, rec, 60)
     got = {s["name"]: s for s in recorder.scores}
-    assert set(got) == {"hallucination_rate", "task_success", "video_hit", "router_correct"}
+    assert set(got) == {"hallucination_rate", "unjudged_share", "task_success", "video_hit", "router_correct"}
     assert all(s["trace_id"] == "t" * 32 for s in got.values())
     assert got["hallucination_rate"]["value"] == 0.5 and "B claim." in got["hallucination_rate"]["comment"]
     assert got["task_success"]["value"] == 1.0 and got["task_success"]["data_type"] == "BOOLEAN"
     assert got["router_correct"]["value"] == 0.0
+    assert got["unjudged_share"]["value"] == 0.0  # both sentences were judged
 
 
 def test_no_scores_for_a_record_without_a_trace(live):

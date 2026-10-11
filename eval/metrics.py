@@ -48,9 +48,42 @@ def router_correct(route: str | None, expected: str | None) -> bool:
 
 
 def hallucination_rate(verdicts: Iterable[str]) -> float | None:
-    """Share of judged sentences marked 'unsupported'; None when nothing was judged."""
+    """Share of *judged* sentences marked 'unsupported'; None when nothing was judged.
+
+    'unjudged' sentences are neither clean nor unsupported here. They are reported separately
+    (see `judge_coverage`); a rate with many unjudged sentences behind it is partial.
+    """
     v = [x for x in verdicts if x in ("supported", "unsupported")]
     return (sum(x == "unsupported" for x in v) / len(v)) if v else None
+
+
+UNJUDGED_WARN_SHARE = 0.10  # above this share of unjudged sentences the hallucination rate is flagged as partial
+
+
+def judge_coverage(per_answer_verdicts: Iterable[Iterable[str]]) -> dict[str, Any]:
+    """How much of what reached the judge actually got a verdict.
+
+    `per_answer_verdicts` has one list of sentence verdicts per answer that was sent to the judge.
+    A sentence the judge gave no usable verdict for is 'unjudged'. It is never counted as supported:
+    `hallucination_rate` leaves it out of both numerator and denominator, and
+    `hallucination_rate_upper_bound` counts it as unsupported, so the two bracket the true rate.
+    """
+    answers = [list(v) for v in per_answer_verdicts]
+    sentences = [x for v in answers for x in v]
+    unjudged = sum(x not in ("supported", "unsupported") for x in sentences)
+    unsupported = sum(x == "unsupported" for x in sentences)
+    fully = sum(bool(v) and all(x not in ("supported", "unsupported") for x in v) for v in answers)
+    partly = sum(any(x not in ("supported", "unsupported") for x in v) for v in answers) - fully
+    return {
+        "judge_answers": len(answers),
+        "answers_fully_unjudged": fully,
+        "answers_partly_unjudged": partly,
+        "unjudged_answer_share": (fully + partly) / len(answers) if answers else None,
+        "judge_sentences": len(sentences),
+        "unjudged_sentences": unjudged,
+        "unjudged_sentence_share": unjudged / len(sentences) if sentences else None,
+        "hallucination_rate_upper_bound": (unsupported + unjudged) / len(sentences) if sentences else None,
+    }
 
 
 def percentile(values: list[float], q: float) -> float | None:
@@ -78,6 +111,7 @@ def summarize(records: list[dict[str, Any]], tolerance_sec: int = 60) -> dict[st
     with_video = [r for r in ok if r.get("gold_video_ids")]
     with_span = [r for r in ok if r.get("gold_segments")]
     verdicts = [s["verdict"] for r in ok for s in (r.get("judge") or {}).get("sentences", [])]
+    per_answer = [[s["verdict"] for s in r["judge"]["sentences"]] for r in ok if (r.get("judge") or {}).get("sentences")]
     lat = [r["latency_sec"] for r in ok]
     u = lambda key: [r["usage"][key] for r in ok]  # noqa: E731
     judge_cost = sum(((r.get("judge") or {}).get("usage") or {}).get("cost_usd", 0.0) for r in ok)
@@ -93,6 +127,7 @@ def summarize(records: list[dict[str, Any]], tolerance_sec: int = 60) -> dict[st
                                   if r.get("expected_route")]),
         "hallucination_rate": hallucination_rate(verdicts),
         "judged_sentences": len([v for v in verdicts if v in ("supported", "unsupported")]),
+        **judge_coverage(per_answer),
         "steps_mean": _mean([float(r["steps"]) for r in ok]),
         "latency_p50": percentile(lat, 50),
         "latency_p95": percentile(lat, 95),
