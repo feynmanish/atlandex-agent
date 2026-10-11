@@ -70,3 +70,9 @@ Judge calls always go to the large model, also when the agent is the small one. 
 - `nvidia/nemotron-3-super-120b-a12b:free`: no errors or retries; all tool calls well-formed.
 - Agent-side problems found and fixed: citations written as `【id】` or with a Unicode non-breaking hyphen inside the ID slipped past the citation check (now normalised); an answer with no citations at all passed the check (now retried once, then flagged).
 - Not fixed, model behaviour: on the Yann LeCun / Eric Jang query both models hit the 6-step limit searching names (`find_videos` matches index terms, and "Yann LeCun" has no match). The answer correctly said LeCun was not covered.
+
+## Phase 2 actuals
+
+- Paid spend: **$0.00** (OpenRouter credits unchanged; `ALLOW_PAID=false` throughout).
+- Free-model requests used on 2026-10-11: 945 of 1,000 at the end of the work. That count includes the Phase 1 tests, a full evaluation run that was lost to a bug and re-run, the other session's tracing tests, and every failed 429 attempt (if failed attempts count).
+- One full evaluation (32 queries x 2 models + judge) took about 1.5 hours plus three re-run passes for the small model, against the Phase 1 estimate of "around 1.5 hours": the estimate held for time, but Laguna XS 2.1 needed far more retries than the 3-query test suggested.
