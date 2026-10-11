@@ -1,0 +1,3 @@
+{"id": "smoke1", "question": "What does Reiner Pope say about how a lab should split compute between pre-training, reinforcement learning and inference?", "gold_segment_ids": [], "expected_route": "simple", "source": "smoke", "needs_review": false}
+{"id": "smoke2", "question": "What do Yann LeCun and Eric Jang each say about the limits of current large language models?", "gold_segment_ids": [], "expected_route": "multi_step", "source": "smoke", "needs_review": false}
+{"id": "smoke3", "question": "Which indexed videos discuss mixture of experts, and what does the one with a readable transcript say about it?", "gold_segment_ids": [], "expected_route": "multi_step", "source": "smoke", "needs_review": false}

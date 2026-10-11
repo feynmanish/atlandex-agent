@@ -42,6 +42,15 @@ def segment_id(video_id: str, start_sec: Any, rank: int = 0) -> str:
     return f"{video_id}@{int(start_sec)}"
 
 
+# Models sometimes cite as 【id】, (id) or [id1, id2] instead of [id].
+_LOOSE_CITE = re.compile(rf"[\[【［(]\s*({ID_PATTERN}(?:\s*[,;]\s*{ID_PATTERN})*)\s*[\]】］)]")
+
+
+def normalize_citations(text: str) -> str:
+    """Rewrite loose citation styles to the canonical `[id] [id]` form."""
+    return _LOOSE_CITE.sub(lambda m: " ".join(f"[{i}]" for i in re.split(r"\s*[,;]\s*", m.group(1))), text)
+
+
 def extract_citations(text: str) -> list[str]:
     """Segment IDs cited in `text`, in order, de-duplicated."""
     seen: list[str] = []

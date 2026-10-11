@@ -14,6 +14,7 @@ AGENT_SYSTEM = """You research questions using an index of long-form videos. Too
 - find_videos(term): which indexed videos discuss a concept, person or product. Pass a short canonical term of 1-4 words, never a sentence. If nothing matches, retry once with a shorter or more common form.
 - search_video(video, question): the passages of ONE video that answer a question. Only call it on videos whose `searchable` is true. If it reports no searchable transcript, do not retry that video.
 - locate_quote(video, phrase): when a phrase is spoken. Use only with words you already saw in a passage.
+find_videos only shows where a term comes up; it does not tell you what was said. When it lists searchable videos relevant to the question, read them with search_video before finishing; a chapter result alone is not evidence of what a speaker said. If a person's name finds nothing, search the topic term instead.
 You get at most {max_steps} tool calls in total. Use as few as the question needs.
 Each turn you see the question and the evidence collected so far. Either call the tools you still need, or, once the evidence is enough (or nothing more can be found), reply with exactly: READY"""
 

@@ -13,7 +13,7 @@ from .citations import drop_unsupported, unsupported_ids
 from .config import Settings
 from .llm import LLM, usage_summary, records_to_dicts
 from .mcp_tools import ToolBox
-from .segments import Segment, extract_citations, parse_tool_output
+from .segments import extract_citations, normalize_citations, parse_tool_output
 
 ROUTES = ("simple", "multi_step", "unclear")
 NO_COVERAGE = "No indexed video covered this question well enough to answer it."
@@ -155,18 +155,24 @@ def build_graph(llm: LLM, tools: ToolBox, settings: Settings):
             user += f"\n\n{state['feedback']}"
         r = await llm.chat([{"role": "system", "content": prompts.ANSWER_SYSTEM},
                             {"role": "user", "content": user}], role="answer")
-        return {"answer": r.content.strip(), "answer_attempts": state.get("answer_attempts", 0) + 1}
+        return {"answer": normalize_citations(r.content.strip()),
+                "answer_attempts": state.get("answer_attempts", 0) + 1}
 
     async def citation_check(state: State) -> State:
         retrieved = state.get("segments", {}).keys()
         bad = unsupported_ids(state["answer"], retrieved)
         info = dict(state.get("citation_check") or {"first_failed": False, "retried": False, "dropped": []})
-        if not bad:
+        uncited = bool(retrieved) and not extract_citations(state["answer"]) and state["answer"] != NO_COVERAGE
+        if uncited and state.get("answer_attempts", 1) >= 2:
+            info["no_citations"] = True  # a second uncited answer is kept as-is, but flagged
+        if not bad and not (uncited and state.get("answer_attempts", 1) < 2):
             return {"citation_check": info, "feedback": ""}
         if state.get("answer_attempts", 1) < 2:
             info.update(first_failed=True, retried=True, unsupported_first=bad)
             fb = (f"Your previous answer cited IDs that were never retrieved: {', '.join(bad)}. "
-                  "Rewrite the answer and cite only IDs from the list above.")
+                  "Rewrite the answer and cite only IDs from the list above." if bad else
+                  "Your previous answer cited no segment IDs. Rewrite it and put the segment ID in square "
+                  "brackets, e.g. [AbCdEfGhIjK@657], after every claim.")
             return {"citation_check": info, "feedback": fb}
         cleaned, dropped = drop_unsupported(state["answer"], retrieved)
         info.update(dropped=dropped)

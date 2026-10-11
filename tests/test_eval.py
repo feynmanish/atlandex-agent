@@ -37,6 +37,13 @@ def test_extract_and_check_citations():
     assert unsupported_ids(ans, [A, "ZZZZZZZZZZZ@9"]) == []
 
 
+def test_normalize_citations_handles_loose_styles():
+    from atlandex_agent.segments import normalize_citations
+    other = f"{VID_A[:-1]}B@7"
+    assert normalize_citations(f"x【{A}】 y ({A}) z [{A}, {other}]") == f"x[{A}] y [{A}] z [{A}] [{other}]"
+    assert normalize_citations("a [not an id] b") == "a [not an id] b"
+
+
 def test_drop_unsupported_keeps_supported_sentences_and_lines():
     ans = f"- Good [{A}].\n- Bad [ZZZZZZZZZZZ@9].\n- Also good [{A}]."
     cleaned, dropped = drop_unsupported(ans, [A])

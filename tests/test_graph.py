@@ -147,6 +147,29 @@ def test_citation_check_drops_unsupported_claims_after_failed_retry():
     assert llm.roles().count("answer") == 2  # one retry, never a third
 
 
+def test_loose_citation_styles_are_normalised_before_the_check():
+    llm = FakeLLM({
+        "router": [ROUTE_SIMPLE],
+        "agent": [tool_turn(("search_video", {"video": VID_A, "question": "q"})), "READY"],
+        "answer": [f"Scaling laws predict loss【{SEG_A}】."],
+    })
+    res = run(llm, toolbox())
+    assert res["cited_ids"] == [SEG_A] and f"[{SEG_A}]" in res["answer"]
+    assert llm.roles().count("answer") == 1
+
+
+def test_uncited_answer_is_retried_once_then_flagged():
+    llm = FakeLLM({
+        "router": [ROUTE_SIMPLE],
+        "agent": [tool_turn(("search_video", {"video": VID_A, "question": "q"})), "READY"],
+        "answer": ["Scaling laws predict loss.", "Still no ids."],
+    })
+    res = run(llm, toolbox())
+    assert llm.roles().count("answer") == 2
+    assert res["citation_check"]["retried"] and res["citation_check"]["no_citations"]
+    assert res["answer"] == "Still no ids."
+
+
 def test_parse_json_object_is_tolerant():
     assert parse_json_object('```json\n{"route": "simple"}\n```') == {"route": "simple"}
     assert parse_json_object('<think>hmm {x}</think> ok {"a": 1} bye') == {"a": 1}
