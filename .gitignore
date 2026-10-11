@@ -13,6 +13,6 @@ dist/
 
 # Runtime artifacts
 .cache/
-llm_cache/
-eval/results/
-eval/labels/to_label.csv
+
+# Raw per-query results hold full answers and can be large; summaries are kept.
+eval/results/*/records.jsonl
