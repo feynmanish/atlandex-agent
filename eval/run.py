@@ -137,8 +137,9 @@ def main() -> None:
     p.add_argument("--dataset", default=str(DEFAULT_DATASET))
     p.add_argument("--include-review", action="store_true",
                    help="also run needs_review records (they are still excluded from headline numbers)")
-    p.add_argument("--gold-tolerance-sec", type=int, default=0,
-                   help="count a cited segment as gold if same video and start within N seconds")
+    p.add_argument("--gold-tolerance-sec", type=int, default=60,
+                   help="a cited segment counts as gold if same video and start within N seconds "
+                        "(bare video-ID gold entries match any segment of that video)")
     p.add_argument("--no-cache", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()

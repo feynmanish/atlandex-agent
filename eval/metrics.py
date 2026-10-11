@@ -12,12 +12,24 @@ def parse_segment_id(sid: str) -> tuple[str, int | None]:
 
 
 def segment_matches(cited: str, gold: str, tolerance_sec: int = 0) -> bool:
-    """Exact match, or same video within `tolerance_sec` when both have a start time."""
+    """Does a cited segment ID count as the gold one?
+
+    - exact match;
+    - a bare gold video ID (no '@') matches any segment of that video;
+    - otherwise the same video within `tolerance_sec` when both have a start time.
+
+    Passage start times shift with the question wording, and some passages have no
+    start time at all, so exact time matches alone would under-count correct answers.
+    """
     if cited == gold:
         return True
     cv, cs = parse_segment_id(cited)
     gv, gs = parse_segment_id(gold)
-    return bool(tolerance_sec) and cv == gv and cs is not None and gs is not None and abs(cs - gs) <= tolerance_sec
+    if cv != gv:
+        return False
+    if "@" not in gold:
+        return True
+    return bool(tolerance_sec) and cs is not None and gs is not None and abs(cs - gs) <= tolerance_sec
 
 
 def task_success(cited_ids: Iterable[str], gold_ids: Iterable[str], tolerance_sec: int = 0) -> bool:

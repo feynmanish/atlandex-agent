@@ -1,4 +1,4 @@
-"""Configuration, read from environment variables (and a local .env file)."""
+﻿"""Configuration, read from environment variables (and a local .env file)."""
 from __future__ import annotations
 
 import os
@@ -25,9 +25,9 @@ class Settings:
     mcp_command: str = "atlandex-mcp"
 
     # Free models by default. Paid fallbacks are only reachable with ALLOW_PAID=true.
-    model_small: str = "google/gemma-4-26b-a4b-it:free"
+    model_small: str = "poolside/laguna-xs-2.1:free"
     model_large: str = "nvidia/nemotron-3-super-120b-a12b:free"
-    paid_small: str = "google/gemma-4-26b-a4b-it"
+    paid_small: str = "poolside/laguna-xs-2.1"
     paid_large: str = "nvidia/nemotron-3-super-120b-a12b"
 
     allow_paid: bool = False
@@ -76,3 +76,4 @@ class Settings:
             max_tool_steps=int(env("MAX_TOOL_STEPS", str(d.max_tool_steps))),
             cache_enabled=_flag("LLM_CACHE", True),
         )
+

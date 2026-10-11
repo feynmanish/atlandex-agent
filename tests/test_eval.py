@@ -42,6 +42,7 @@ def test_normalize_citations_handles_loose_styles():
     other = f"{VID_A[:-1]}B@7"
     assert normalize_citations(f"x【{A}】 y ({A}) z [{A}, {other}]") == f"x[{A}] y [{A}] z [{A}] [{other}]"
     assert normalize_citations("a [not an id] b") == "a [not an id] b"
+    assert normalize_citations("**[xmkSf5IS‑zw@1879]**") == "**[xmkSf5IS-zw@1879]**"  # non-breaking hyphen
 
 
 def test_drop_unsupported_keeps_supported_sentences_and_lines():
@@ -71,6 +72,12 @@ def test_gold_tolerance_matches_same_video_only():
     assert not segment_matches(f"{VID_A}@130", A)
     assert segment_matches(f"{VID_A}@130", A, tolerance_sec=30)
     assert not segment_matches(f"BBBBBBBBBBB@130", A, tolerance_sec=30)
+
+
+def test_bare_video_id_gold_matches_any_segment_of_that_video():
+    assert segment_matches(f"{VID_A}@999", VID_A) and segment_matches(f"{VID_A}@na1", VID_A)
+    assert not segment_matches("BBBBBBBBBBB@5", VID_A)
+    assert not segment_matches(f"{VID_A}@na1", A, tolerance_sec=60)  # timed gold needs a timed citation
 
 
 def test_router_correct():

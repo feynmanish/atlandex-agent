@@ -46,8 +46,14 @@ def segment_id(video_id: str, start_sec: Any, rank: int = 0) -> str:
 _LOOSE_CITE = re.compile(rf"[\[【［(]\s*({ID_PATTERN}(?:\s*[,;]\s*{ID_PATTERN})*)\s*[\]】］)]")
 
 
+# Models also swap the hyphen inside an ID for a Unicode look-alike (U+2010..2015, U+2212).
+_DASHY_ID = re.compile(r"[A-Za-z0-9_‐-―−-]{11}@(?:\d+|na\d+)")
+_DASHES = dict.fromkeys([*range(0x2010, 0x2016), 0x2212], "-")
+
+
 def normalize_citations(text: str) -> str:
     """Rewrite loose citation styles to the canonical `[id] [id]` form."""
+    text = _DASHY_ID.sub(lambda m: m.group(0).translate(_DASHES), text)
     return _LOOSE_CITE.sub(lambda m: " ".join(f"[{i}]" for i in re.split(r"\s*[,;]\s*", m.group(1))), text)
 
 
