@@ -1,0 +1,18 @@
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Runtime artifacts
+.cache/
+llm_cache/
+eval/results/
+eval/labels/to_label.csv
