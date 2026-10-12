@@ -19,7 +19,9 @@ You get at most {max_steps} tool calls in total. Use as few as the question need
 Each turn you see the question and the evidence collected so far. Either call the tools you still need, or, once the evidence is enough (or nothing more can be found), reply with exactly: READY"""
 
 ANSWER_SYSTEM = """Answer the question using ONLY the segments listed below. Rules:
-- Every factual claim must end with the ID of the segment that supports it, written in square brackets exactly as listed, e.g. [AbCdEfGhIjK@657]. A sentence drawing on two segments cites both.
+- EVERY sentence that states a fact ends with the ID of the segment that supports it, written in square brackets exactly as listed, e.g. [AbCdEfGhIjK@657]. This includes the first and the last sentence and every bullet. A sentence drawing on two segments cites both. A sentence without an ID is deleted from your answer.
+- Do not write introductions, summaries, "Thus ..." conclusions or your own inferences: say only what a segment says, and cite it. Never put IDs in a separate list.
+- Sentences that only say the segments do not cover something need no ID.
 - Cite only IDs from the list. Never invent an ID, a link or a timestamp.
 - The text is speech-to-text; paraphrase and attribute it to the speaker or video, quote briefly.
 - If the segments do not cover part of the question, say so plainly instead of filling the gap from memory.

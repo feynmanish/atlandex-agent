@@ -15,6 +15,8 @@ import math
 from collections import defaultdict
 from typing import Any, Iterable
 
+from atlandex_agent.citations import answer_sentences as split_answer
+
 
 def parse_segment_id(sid: str) -> tuple[str, int | None]:
     """'abc@120' -> ('abc', 120); 'abc@na2' (unknown start) -> ('abc', None)."""
@@ -136,6 +138,10 @@ def summarize(records: list[dict[str, Any]], tolerance_sec: int = 60) -> dict[st
         "cost_usd_total": sum(r["usage"]["cost_usd"] for r in ok) + judge_cost,
         "citation_retries": sum(1 for r in ok if r.get("citation_check", {}).get("retried")),
         "citation_drops": sum(len(r.get("citation_check", {}).get("dropped", [])) for r in ok),
+        # factual sentences that cited nothing: flagged in the first answer / still uncited and dropped from the final one
+        "uncited_flagged": sum(len(r.get("citation_check", {}).get("uncited_first", [])) for r in ok),
+        "uncited_dropped": sum(len(r.get("citation_check", {}).get("dropped_uncited", [])) for r in ok),
+        "final_sentences": sum(len(split_answer(r.get("answer", ""))) for r in ok),
     }
 
 

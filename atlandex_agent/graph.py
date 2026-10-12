@@ -9,7 +9,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from . import prompts
-from .citations import drop_unsupported, unsupported_ids
+from .citations import drop_uncited, drop_unsupported, uncited_claims, unsupported_ids
 from .config import Settings
 from .llm import LLM, usage_summary, records_to_dicts
 from .mcp_tools import ToolBox
@@ -161,22 +161,35 @@ def build_graph(llm: LLM, tools: ToolBox, settings: Settings):
 
     async def citation_check(state: State) -> State:
         retrieved = state.get("segments", {}).keys()
-        bad = unsupported_ids(state["answer"], retrieved)
+        answer = state["answer"]
+        bad = unsupported_ids(answer, retrieved)
+        # Factual sentences that cite nothing (the judge flagged these most often). Only meaningful when
+        # something was retrieved; the fixed "no coverage" reply has no segments to cite.
+        claims = uncited_claims(answer) if retrieved and answer != NO_COVERAGE else []
         info = dict(state.get("citation_check") or {"first_failed": False, "retried": False, "dropped": []})
-        uncited = bool(retrieved) and not extract_citations(state["answer"]) and state["answer"] != NO_COVERAGE
-        if uncited and state.get("answer_attempts", 1) >= 2:
-            info["no_citations"] = True  # a second uncited answer is kept as-is, but flagged
-        if not bad and not (uncited and state.get("answer_attempts", 1) < 2):
+        if not bad and not claims:
+            if retrieved and answer != NO_COVERAGE and not extract_citations(answer):
+                info["no_citations"] = True  # nothing to check, but the answer cites no segment at all
             return {"citation_check": info, "feedback": ""}
         if state.get("answer_attempts", 1) < 2:
-            info.update(first_failed=True, retried=True, unsupported_first=bad)
-            fb = (f"Your previous answer cited IDs that were never retrieved: {', '.join(bad)}. "
-                  "Rewrite the answer and cite only IDs from the list above." if bad else
-                  "Your previous answer cited no segment IDs. Rewrite it and put the segment ID in square "
-                  "brackets, e.g. [AbCdEfGhIjK@657], after every claim.")
-            return {"citation_check": info, "feedback": fb}
-        cleaned, dropped = drop_unsupported(state["answer"], retrieved)
-        info.update(dropped=dropped)
+            info.update(first_failed=True, retried=True, unsupported_first=bad, uncited_first=claims)
+            parts = ["Rewrite the answer."]
+            if bad:
+                parts.append(f"Your previous answer cited IDs that were never retrieved: {', '.join(bad)}. "
+                             "Cite only IDs from the list above.")
+            if claims:
+                shown = "\n".join(f"- {c[:200]}" for c in claims[:8])
+                parts.append("These sentences of your previous answer state facts but end without a segment ID:\n"
+                             f"{shown}\nPut the ID of the supporting segment in square brackets, e.g. "
+                             "[AbCdEfGhIjK@657], at the end of each such sentence, or delete the sentence. "
+                             "Do not add introductions, summaries or conclusions of your own.")
+            return {"citation_check": info, "feedback": " ".join(parts)}
+        # Second answer still has problems: drop the offending sentences and keep the rest.
+        cleaned, dropped = drop_unsupported(answer, retrieved)
+        cleaned, dropped_uncited = drop_uncited(cleaned)
+        info.update(dropped=dropped, dropped_uncited=dropped_uncited)
+        if retrieved and cleaned and not extract_citations(cleaned):
+            info["no_citations"] = True  # nothing left that cites a segment (only 'not covered' statements)
         return {"answer": cleaned or NO_COVERAGE, "citation_check": info, "feedback": ""}
 
     def after_check(state: State) -> str:

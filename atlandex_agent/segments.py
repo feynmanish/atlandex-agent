@@ -66,6 +66,10 @@ def extract_citations(text: str) -> list[str]:
     return seen
 
 
+# A sentence that ends in one of these is not over: 'the "Dr. Frankenstein theory"'.
+_ABBREVIATION_END = re.compile(r"(?:^|[\s\"'‘“(\[])(?:Dr|Mr|Mrs|Ms|Prof|Sr|Jr|St|vs|e\.g|i\.e)\.$")
+
+
 def split_sentences(text: str) -> list[str]:
     """Sentence split that keeps a trailing [id] citation with its sentence."""
     text = re.sub(r"\s+", " ", text.strip())
@@ -75,7 +79,13 @@ def split_sentences(text: str) -> list[str]:
         out.append(text[start : m.end()].strip())
         start = m.end()
     out.append(text[start:].strip())
-    return [s for s in out if s]
+    merged: list[str] = []
+    for s in out:
+        if merged and _ABBREVIATION_END.search(merged[-1]):
+            merged[-1] = f"{merged[-1]} {s}"
+        else:
+            merged.append(s)
+    return [s for s in merged if s]
 
 
 def parse_tool_output(tool: str, raw: str) -> tuple[list[Segment], str]:
