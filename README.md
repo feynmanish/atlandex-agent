@@ -131,7 +131,18 @@ The small model's 5 missing runs are upstream HTTP 429 outages (it was retried i
 
 Cost: $0.00 (free models). Mean tokens per completed run, existing set: large 5,129 in / 1,785 out, small 4,940 in / 970 out.
 
-How to read the hallucination column: the judge over-flags (see below), 24 of the 44 sentences it flagged cited nothing at all, and 27 sentences got no verdict and are excluded. In the 30-row validation sample the judge's flags were right 9 times out of 15, so the true rate under the reference rubric is probably well below these numbers. Treat them as an upper bound.
+How to read the hallucination column: the judge over-flags (see below), 24 of the 44 sentences it flagged cited nothing at all, and 27 sentences got no verdict and are excluded (see the re-judge below). In the 30-row validation sample the judge's flags were right 9 times out of 15, so the true rate under the reference rubric is probably well below these numbers. Treat them as an upper bound.
+
+**Re-judging the unjudged sentences.** The 27 (30 with the candidates the headline leaves out) were unjudged because the free judge ran out of its 1500-token budget. The judge now gets 4000 tokens, keeps the verdicts of a cut-off reply and re-asks only for the missing sentences (`python -m eval.rejudge --results eval/results/20261011-125600 --only-unjudged`). On this run it re-judged 7 answers and left 0 sentences unjudged. The table above is the original, as published; the re-judged numbers are in [`rejudge_report.json`](eval/results/20261011-125600/rejudge_report.json):
+
+| model | source | hallucination, judged only (upper bound), original | after re-judge | unjudged sentences, original | after |
+|---|---|---|---|---|---|
+| nemotron-3-super-120b (large) | existing | 41% (54%), 27 judged | 40% (40%), 35 judged | 8 of 35 | 0 |
+| laguna-xs-2.1 (small) | existing | 39% (50%), 57 judged | 40% (40%), 70 judged | 13 of 70 | 0 |
+| nemotron-3-super-120b (large) | verified candidates | 78% (87%), 9 judged | 47% (47%), 15 judged | 6 of 15 | 0 |
+| laguna-xs-2.1 (small) | verified candidates | 40% (40%), 10 judged | 40% (40%), 10 judged | 0 of 10 | 0 |
+
+The upper bound counts an unjudged sentence as unsupported; once every sentence has a verdict, rate and upper bound are the same number.
 
 ### Judge validation
 
