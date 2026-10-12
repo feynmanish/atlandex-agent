@@ -2,7 +2,7 @@
 
 A [LangGraph](https://langchain-ai.github.io/langgraph/) agent that answers questions about long-form video by calling the three tools of [`atlandex-mcp`](https://github.com/feynmanish/atlandex-mcp) (`find_videos`, `search_video`, `locate_quote`), plus an evaluation harness that measures video hit, segment hit (±60 s), router accuracy and hallucination rate with an LLM judge. All models run through [OpenRouter](https://openrouter.ai), on free `:free` models by default.
 
-**Status:** the agent, the eval and one full free-model evaluation are done; see [Results](#results). The judge was validated against reference labels from Claude, not against human labels.
+**Status:** the agent, the eval and two full free-model evaluations (the Phase 2 baseline and the fixed version) are done; see [Results](#results). The judge was validated against reference labels from Claude, not against human labels.
 
 ## How it works
 
@@ -73,6 +73,8 @@ python -m eval.run --model both --subset 5 --include-review    # 5-query trial
 python -m eval.run --model both --include-review               # full run: 22 existing + 10 new candidates, both models
 python -m eval.run --resume eval/results/<run> --model both --include-review   # re-run only the runs that errored
 python -m eval.summarize eval/results/<run>                    # rebuild summary.json/md from records.jsonl
+python -m eval.rejudge --results eval/results/<run> --only-unjudged   # re-judge only answers with unjudged sentences (sidecar + report)
+python -m eval.compare --baseline eval/results/<old> --fixed eval/results/<new>   # per-query before/after (comparison.md)
 python -m eval.sample_for_labels --n 30 --stratify             # eval/labels/to_label.csv (no verdicts) + judge_verdicts.csv
 python -m eval.agreement                                       # main judge vs the reference labels
 python -m eval.rejudge --results eval/results/<run> --judge-model <id> --name <short> --labelled-only
@@ -113,6 +115,50 @@ pytest
 All tests run offline with a fake LLM, a fake toolbox and a mock HTTP transport: router branches, the step limit, the paid-call lock, retry/throttle/cache/budget, citation check (pass, retry, drop), metrics and the agreement script. CI runs them on Python 3.10 and 3.13 without secrets.
 
 ## Results
+
+Two runs of the same 29 verified queries, never mixed in one table: the **fixed version** (this section) and the **Phase 2 baseline** from before the fixes (further down). Free models only, paid spend $0.00, tracing on. The judge is `nvidia/nemotron-3-super-120b-a12b:free`. Treat all of it as a small-sample snapshot, not a ranking: 22 and 7 queries per model.
+
+### Fixed version
+
+Run [`eval/results/20261012-062749`](eval/results/20261012-062749/summary.md) (`python -m eval.run --model both --no-cache`, then four `--resume` passes for runs the free small model dropped on upstream HTTP 429s; all 58 query-runs completed). Code: everything in [DECISIONS.md](DECISIONS.md) "Plan: three fixes" plus fix 4: judge budget and batched retry, uncited sentences checked and dropped, linked videos read first, `finish` tool with a 600-token cap on agent turns.
+
+**Existing 22 queries**
+
+| model | runs ok/total | video hit | segment hit (±60 s) | router acc. | hallucination (judged sentences) | unjudged sentences | steps (mean) | latency p50 / p95 (s) | tokens in / out (agent, mean) |
+|---|---|---|---|---|---|---|---|---|---|
+| nemotron-3-super-120b (large) | 22/22 | 82% | 73% | 86% | 15% (34) | 0 of 34 | 1.2 | 26.4 / 78.0 | 3,998 / 1,374 |
+| laguna-xs-2.1 (small) | 22/22 | 82% | 77% | 82% | 23% (62) | 0 of 62 | 1.9 | 83.4 / 193.2 | 5,326 / 1,022 |
+
+**New multi-step questions, the 7 verified by Claude**
+
+| model | runs ok/total | video hit | segment hit (±60 s) | router acc. | hallucination (judged sentences) | unjudged sentences | steps (mean) | latency p50 / p95 (s) | tokens in / out (agent, mean) |
+|---|---|---|---|---|---|---|---|---|---|
+| nemotron-3-super-120b (large) | 7/7 | 57% | 43% | 100% | 33% (12) | 0 of 12 | 3.9 | 58.8 / 115.2 | 12,349 / 2,645 |
+| laguna-xs-2.1 (small) | 7/7 | 86% | 86% | 86% | 38% (21) | 0 of 21 | 5.7 | 167.4 / 264.5 | 14,399 / 1,960 |
+
+Task success here means the two hit rates above, kept apart as before (video hit: cites a gold video; segment hit: cites a segment inside a gold span ±60 s). Unjudged sentences are 0 everywhere, so the hallucination rate and its upper bound are the same number. Hit rates are over 22 or 7 queries, so one query is 4.5 or 14 points.
+
+- **Uncited sentences:** across the 58 runs the answer check flagged 11 factual sentences without an ID (153 final sentences in total) and dropped **1** after the retry. Replaying the old Phase 2 answers through the same check had flagged 22 of 139 sentences (16%), so the new answer prompt did most of the work and the drop is the safety net.
+- **The 600-token cap on agent turns hurts the large model.** An agent turn hit the cap in 19 of 58 runs (large 16, small 3). The large model is a reasoning model whose hidden thinking counts against the cap, so a turn can be cut off before it emits a tool call; the agent then treats it as done (noted in `notes`). This is the main reason the large model's existing-set segment hit fell from 82% to 73%: `ex01`, `ex05`, `ex09` lost their hit, and the multi-step `nc03` went from 6 steps to 1. A diagnostic re-run of those queries with the cap at 1500 (large model only, 6 queries, not part of any table above) recovered `ex01`, `ex05` and `ex09`. See DECISIONS.md.
+- **Empty answers:** 2 large-model answers are empty because the answer step ran out of its own 1500-token budget on hidden reasoning (the Phase 2 baseline had 2 such answer calls as well). An empty answer currently passes the citation check, counts as no hit, and is not retried. Not fixed here.
+- **The small model's latency is mostly provider noise.** 61–64% of its LLM calls needed retries after HTTP 429 in both runs, and about 85% of its LLM time was spent in those retried calls, so its latency rises and falls with the free tier's load rather than with the code.
+
+### Before / after (same queries, paired)
+
+Only query-runs completed in both runs are compared (large 29, small 24 of 29). Latency is wall-clock seconds per query-run and tokens are the agent's own calls (the judge is excluded). The baseline's hallucination rate here uses the re-judged verdicts (judge fix applied to the Phase 2 records), so both sides come from the same judge code. Per-query rows: [`comparison.md`](eval/results/20261012-062749/comparison.md) (rebuild with `python -m eval.compare --baseline eval/results/20261011-125600 --fixed eval/results/20261012-062749`).
+
+| agent model | paired runs | | steps (mean) | latency p50 / p95 (s) | tokens in / out | hallucination (judged sentences) | unjudged sentences |
+|---|---|---|---|---|---|---|---|
+| nemotron (large) | 29 | before | 2.3 | 37.6 / 113.4 | 7,308 / 2,376 | 42% (50) | 0 |
+| | | after | 1.8 | 33.8 / 81.4 | 6,014 / 1,681 | 20% (46) | 0 |
+| laguna (small) | 24 | before | 2.0 | 54.2 / 162.9 | 5,448 / 1,018 | 40% (80) | 0 |
+| | | after | 2.2 | 85.1 / 196.4 | 6,298 / 1,191 | 22% (68) | 0 |
+
+Large: fewer steps, less latency and fewer tokens (the linked video is read first, and no more draft answers in the "done" turn), and the hallucination rate halves. Small: steps and tokens go up slightly (the first search result is now in every later prompt) and the latency change is dominated by the 429 retries described above, so it says nothing about the code. The hallucination drop for both models comes mostly from uncited sentences no longer appearing. Over all completed runs, 53 of 130 judged baseline sentences were unsupported and 25 of those cited nothing; in the fixed run 31 of 129 were unsupported and 8 cited nothing. Among sentences that do cite, the unsupported share also fell (29% to 19%), which I cannot attribute to a cause.
+
+### Phase 2 baseline (before the fixes)
+
+**This is the baseline run, from before the judge fix, the uncited-sentence check, the linked-video step and the finish tool. Do not compare it with the fixed-version tables above except through the paired table.**
 
 Source: [`eval/results/20261011-125600/summary.json`](eval/results/20261011-125600/summary.json) (rendered in `summary.md`), one run, free models only, paid spend $0.00. The agent was run twice per query, once with each model; the judge is `nvidia/nemotron-3-super-120b-a12b:free`. Hit rates are over completed runs (*ok/total* shows how many runs finished). Read these as a small-sample snapshot, not a ranking: 22 and 7 queries.
 
@@ -169,3 +215,6 @@ So the main judge is usable but strict: it rarely misses an unsupported claim an
 - Passage start times move with the question wording, and a minority of passages come back with no start time (0.5% to 7% in three samples, higher in an earlier ad-hoc one), which can never be a segment hit.
 - `find_videos` matches index terms, not names, so questions about a person who is not an indexed term cost the agent steps (9 completed runs used all 6). These are atlandex-mcp findings, not fixed here; see [DECISIONS.md](DECISIONS.md).
 - The Langfuse `task_success` score (added with the tracing) is the segment-hit measure above; it is not video hit.
+- The 600-token cap on agent turns truncates the large (reasoning) model in about 28% of its agent turns; a diagnostic with a cap of 1500 recovered 3 of the 4 queries it broke (see Results and DECISIONS.md). The cap is kept as specified, so the fixed-version numbers for the large model include that cost.
+- An empty answer (the answer step spends its 1500 tokens on hidden reasoning) is not detected or retried; 2 of 58 fixed-version runs and 2 baseline answer calls hit this.
+- The uncited-claim check is a heuristic (see DECISIONS.md): it can miss an uncited claim phrased like a "not covered" statement, and it treats a bare ID without brackets as uncited.
