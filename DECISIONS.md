@@ -72,7 +72,9 @@ Reporting rule (implemented in `eval/metrics.py`, `eval/run.py`, README): an `un
 
 Another session is running `eval.run` in the same folder, so no agent code is touched until that is confirmed finished. Order: 3 first (it makes existing results usable), then 1 and 2 (they change agent behaviour, so results before and after are not comparable and must not be mixed in one table).
 
-### 1. YouTube URL in the question -> video ID
+### 1. YouTube URL in the question -> video ID (implemented in the agent-fixes PR)
+
+**As built:** `atlandex_agent/urls.py` finds the IDs (`watch?v=` with other parameters before or after, `youtu.be/`, `/shorts/`, `/embed/`, `/live/`). A `seed` node between the router and the agent loop runs `search_video(video=<id>, question=<question without the link>)` for up to 3 linked videos, through the normal tool node, so it is a counted, traced, citable step. Not run for `unclear` questions. If the video has no searchable transcript the result is an error step and the agent carries on with `find_videos` as before. The agent prompt tells the model not to search a linked video again.
 
 - **Evidence:** all 22 `existing` queries contain a `youtube.com/watch?v=` URL. In trace `ex03` the agent spent 3 `find_videos` calls (two returned 0 matches) and about 25 s before it called `search_video` on a video ID that was already in the question.
 - **Change:** a small pure function `video_ids_in(question)` (regex for `watch?v=`, `youtu.be/`, `shorts/`; 11-character IDs). In the graph, when it finds IDs, run `search_video(video=<id>, question=<question without the URL>)` once before the agent loop, and add the result to the evidence like any tool call (it counts as a step, is traced, and its segments are citable). The agent loop then continues as before, so comparison questions can still search further. If the tool says the video is not searchable or returns an error, nothing special happens: the agent proceeds with `find_videos` as today.
@@ -80,7 +82,9 @@ Another session is running `eval.run` in the same folder, so no agent code is to
 - **Tests:** ID extraction (the 3 URL shapes, extra query params, no URL, two URLs); pre-seeded step appears in `tool_calls` and `segments`; non-searchable video falls through; offline with the fake toolbox.
 - **Check:** re-run the 22 `existing` queries on both models; expect fewer steps and lower latency, video hit not worse.
 
-### 2. Done-signal for the final agent turn
+### 2. Done-signal for the final agent turn (implemented in the agent-fixes PR)
+
+**As built:** the agent is offered a no-argument `finish` tool next to the MCP tools (never sent to the server, never a step); a bare `READY` still works; `finish` next to real calls is ignored so the real calls run. Agent turns get `max_tokens` 600 (`AGENT_MAX_TOKENS`); other roles keep their caps. A reply that is cut off at the cap with no tool call is treated as done and noted (`LLMResponse.finish_reason` is now recorded, and cached). The prompt says the answer is written in a later step. Not done: no retry with a bigger cap.
 
 - **Evidence:** the "reply READY" turn is where the model writes a full answer instead: its completion tokens have median 713 (p90 1455, max 1500) vs median 196 for tool-call turns; 18 of 25 final turns are over 300 tokens; it is about 17% of total latency. In trace `ex03` it took 49.8 s and 1226 tokens, and the text is thrown away.
 - **Change:** (a) a per-call `max_tokens` on `LLM.chat` (shared with fix 3); agent turns get a cap of 600 (observed tool-call turns: p90 461, max 588; hidden reasoning counts toward it, so not lower). (b) Prompt: "When you have enough evidence, call the `finish` tool" and offer a no-argument `finish()` tool next to the MCP tools; any reply with no tool call is treated as finished (as today). The cap bounds the cost either way; the tool gives a structured signal instead of a text convention.

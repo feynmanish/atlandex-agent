@@ -11,23 +11,26 @@ flowchart TD
     Q([question]) --> R[router]
     R -- unclear --> C[clarify: one question back]
     C --> E1([end])
-    R -- simple / multi_step --> A[agent loop]
+    R -- simple / multi_step --> S[seed: read videos linked in the question]
+    S --> A[agent loop]
     A -- tool calls --> T[run MCP tools]
+    S -- linked video --> T
     T -- steps left --> A
-    A -- READY --> AN[answer]
+    A -- finish --> AN[answer]
     T -- 6 steps used --> AN
     AN --> CC{citation_check}
-    CC -- cited IDs not retrieved or no citations, first try --> AN
-    CC -- still bad --> D[drop unsupported claims]
+    CC -- bad IDs or sentences without an ID, first try --> AN
+    CC -- still bad --> D[drop those sentences]
     CC -- ok --> E2([end])
     D --> E2
 ```
 
 1. **router** classifies the question as `simple`, `multi_step` or `unclear` (JSON output).
 2. **clarify** returns one clarifying question for `unclear` and stops.
-3. **agent loop**: the model sees the question and a size-capped digest of the evidence so far and either calls tools or says `READY`. At most 6 tool calls. Context is rebuilt each turn, not accumulated.
-4. **answer** writes from the retrieved passages only, citing each claim as `[video_id@seconds]`.
-5. **citation_check** verifies, without an LLM, that every cited ID was retrieved in this run. On failure the answer is retried once; if it still fails the unsupported sentences are dropped and that is recorded.
+3. **seed**: if the question links a YouTube video (all 22 existing eval questions do), that video (up to 3) is read first with `search_video` on its ID, so the agent does not spend steps finding it. It counts as a step.
+4. **agent loop**: the model sees the question and a size-capped digest of the evidence so far and either calls tools or calls the no-argument `finish` tool (a bare `READY` still works). Agent turns are capped at 600 output tokens so a turn cannot turn into a draft answer. At most 6 tool calls in total. Context is rebuilt each turn, not accumulated.
+5. **answer** writes from the retrieved passages only; every factual sentence ends with `[video_id@seconds]`.
+6. **citation_check** verifies, without an LLM, that every cited ID was retrieved in this run and that every factual sentence cites a segment (a sentence that only says the segments do not cover something, a heading or a fragment is not a claim). On failure the answer is retried once with the offending sentences named; if it still fails, those sentences are dropped and that is recorded (`dropped`, `dropped_uncited`). An answer with nothing left becomes the "no coverage" reply.
 
 Passages carry no ID of their own, so the agent derives one: `video_id@start_sec` (`video_id@na<rank>` if the start time is unknown). The CLI maps IDs back to the tools' ready-made `citation` links.
 

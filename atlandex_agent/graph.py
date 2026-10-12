@@ -15,8 +15,19 @@ from .llm import LLM, usage_summary, records_to_dicts
 from .mcp_tools import ToolBox
 from .segments import extract_citations, normalize_citations, parse_tool_output
 from .tracing import NullTracer, TraceInfo, tracer_for
+from .urls import strip_urls, video_ids_in
 
 ROUTES = ("simple", "multi_step", "unclear")
+MAX_SEEDED_VIDEOS = 3  # videos linked in the question that are read before the agent loop starts
+
+# A no-argument tool that is not an MCP tool: the model calls it to say the evidence is enough. It is offered
+# next to the real tools, never executed, and never counted as a step.
+FINISH_TOOL = "finish"
+FINISH_SPEC = {"type": "function", "function": {
+    "name": FINISH_TOOL,
+    "description": "Call this when the evidence collected so far is enough to answer, or nothing more can be found. "
+                   "Takes no arguments.",
+    "parameters": {"type": "object", "properties": {}}}}
 NO_COVERAGE = "No indexed video covered this question well enough to answer it."
 
 
@@ -98,20 +109,35 @@ def build_graph(llm: LLM, tools: ToolBox, settings: Settings):
         user = (
             f"Question: {state['question']}\n{hint}\nTool calls used: {steps}/{settings.max_tool_steps}.\n\n"
             f"Evidence so far:\n{bound_evidence(state.get('evidence', []), settings.evidence_char_budget)}\n\n"
-            "Call a tool if you still need evidence; otherwise reply with exactly: READY"
+            "Call a tool if you still need evidence; otherwise call the finish tool (or reply with exactly: READY)"
         )
         msgs = [{"role": "system", "content": prompts.AGENT_SYSTEM.format(max_steps=settings.max_tool_steps)},
                 {"role": "user", "content": user}]
-        r = await llm.chat(msgs, tools=specs, role="agent")
-        if r.tool_calls:
-            return {"pending": r.tool_calls, "agent_done": False}
+        # The capped reply can only be a tool call, `finish`, or a short READY; it cannot turn into a draft answer.
+        r = await llm.chat(msgs, tools=specs + [FINISH_SPEC], role="agent", max_tokens=settings.agent_max_tokens)
+        calls = [c for c in r.tool_calls if c["name"] != FINISH_TOOL]
+        if calls:  # `finish` next to real calls is ignored: the real calls run, the model can finish next turn
+            return {"pending": calls, "agent_done": False}
         if steps == 0 and not state.get("nudged"):
             # A model that answers before any search would produce an ungrounded answer.
             return {"pending": [], "agent_done": False, "nudged": True,
                     "notes": state.get("notes", []) + ["agent skipped tools on first turn; nudged"],
                     "evidence": state.get("evidence", []) + [
                         {"header": "system", "body": "You must call find_videos or search_video before answering."}]}
-        return {"pending": [], "agent_done": True}
+        notes = state.get("notes", [])
+        if r.finish_reason == "length" and not r.tool_calls:
+            notes = notes + ["agent turn hit the token cap without a tool call; treated as done"]
+        return {"pending": [], "agent_done": True, "notes": notes}
+
+    async def seed(state: State) -> State:
+        """Questions that link their video (all 22 existing eval questions do): read that video first."""
+        ids = video_ids_in(state["question"])[:MAX_SEEDED_VIDEOS]
+        if not ids:
+            return {"pending": []}
+        question = strip_urls(state["question"])
+        return {"pending": [{"id": f"seed{i}", "name": "search_video", "args": {"video": v, "question": question}}
+                            for i, v in enumerate(ids)],
+                "notes": state.get("notes", []) + [f"read the video(s) named in the question first: {', '.join(ids)}"]}
 
     async def run_tools(state: State) -> State:
         log = list(state.get("tool_log", []))
@@ -198,14 +224,17 @@ def build_graph(llm: LLM, tools: ToolBox, settings: Settings):
     g = StateGraph(State)
     g.add_node("router", router)
     g.add_node("clarify", clarify)
+    g.add_node("seed", seed)
     g.add_node("agent", agent)
     g.add_node("tools", run_tools)
     g.add_node("answer", answer)
     g.add_node("citation_check", citation_check)
     g.add_edge(START, "router")
-    g.add_conditional_edges("router", lambda s: "clarify" if s["route"] == "unclear" else "agent",
-                            {"clarify": "clarify", "agent": "agent"})
+    g.add_conditional_edges("router", lambda s: "clarify" if s["route"] == "unclear" else "seed",
+                            {"clarify": "clarify", "seed": "seed"})
     g.add_edge("clarify", END)
+    g.add_conditional_edges("seed", lambda s: "tools" if s.get("pending") else "agent",
+                            {"tools": "tools", "agent": "agent"})
     g.add_conditional_edges("agent", after_agent, {"tools": "tools", "agent": "agent", "answer": "answer"})
     g.add_conditional_edges("tools", after_tools, {"agent": "agent", "answer": "answer"})
     g.add_edge("answer", "citation_check")

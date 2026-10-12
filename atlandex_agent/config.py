@@ -37,6 +37,9 @@ class Settings:
     max_retries: int = 6
     request_timeout_sec: float = 120.0
     max_tokens: int = 1500
+    # Agent turns only emit tool calls (observed: median 196 tokens, max 588), but a "reply READY" turn
+    # used to turn into a full draft answer (median 713 tokens, 17% of latency), so cap it.
+    agent_max_tokens: int = 600
     temperature: float = 0.0
 
     max_tool_steps: int = 6
@@ -80,6 +83,7 @@ class Settings:
             budget_usd=float(env("BUDGET_USD", "0") or 0),
             requests_per_minute=int(env("REQUESTS_PER_MINUTE", str(d.requests_per_minute))),
             max_tool_steps=int(env("MAX_TOOL_STEPS", str(d.max_tool_steps))),
+            agent_max_tokens=int(env("AGENT_MAX_TOKENS", str(d.agent_max_tokens))),
             cache_enabled=_flag("LLM_CACHE", True),
             langfuse_public_key=env("LANGFUSE_PUBLIC_KEY", ""),
             langfuse_secret_key=env("LANGFUSE_SECRET_KEY", ""),

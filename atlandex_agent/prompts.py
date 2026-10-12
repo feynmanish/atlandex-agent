@@ -16,7 +16,8 @@ AGENT_SYSTEM = """You research questions using an index of long-form videos. Too
 - locate_quote(video, phrase): when a phrase is spoken. Use only with words you already saw in a passage.
 find_videos only shows where a term comes up; it does not tell you what was said. When it lists searchable videos relevant to the question, read them with search_video before finishing; a chapter result alone is not evidence of what a speaker said. If a person's name finds nothing, search the topic term instead.
 You get at most {max_steps} tool calls in total. Use as few as the question needs.
-Each turn you see the question and the evidence collected so far. Either call the tools you still need, or, once the evidence is enough (or nothing more can be found), reply with exactly: READY"""
+If the question links a video, its passages were already fetched and are in the evidence; do not search for that video again.
+Each turn you see the question and the evidence collected so far. Either call the tools you still need, or, once the evidence is enough (or nothing more can be found), call the finish tool. Never write the answer here: the answer is written in a later step, so a turn without a tool call should be the finish call or the single word READY."""
 
 ANSWER_SYSTEM = """Answer the question using ONLY the segments listed below. Rules:
 - EVERY sentence that states a fact ends with the ID of the segment that supports it, written in square brackets exactly as listed, e.g. [AbCdEfGhIjK@657]. This includes the first and the last sentence and every bullet. A sentence drawing on two segments cites both. A sentence without an ID is deleted from your answer.
