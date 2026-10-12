@@ -100,6 +100,14 @@ Original plan:
 - **Tests:** a judge fake that truncates on the first call and succeeds on the batched retry; the cap is passed; still `unjudged` (not `supported`) if the retry also fails.
 - **Done when:** unjudged sentences are at or below 10% on a re-run of the current records (target: near 0), otherwise report the remaining share as is.
 
+### 4. Uncited sentences (added after the plan above; implemented in the uncited-sentences PR)
+
+- **Evidence:** 24 of the 44 sentences the Phase 2 judge flagged unsupported cited nothing. Read one by one, the uncited sentences were: real claims with no ID ("Vapnik expresses doubt ...", "Thus, according to Vapnik ..."), "the segments do not cover X" statements (which are not claims), headings and ID lists, and fragments caused by the sentence splitter breaking after "Dr.".
+- **Change:** (a) the answer prompt now requires an ID on every factual sentence including the first, the last and every bullet, forbids introductions, "Thus ..." conclusions and separate ID lists, and says sentences that only state non-coverage need none. (b) `citation_check` flags factual sentences without an ID, retries the answer once with those sentences named, and drops the ones still uncited from the second answer (an answer with nothing left becomes the "no coverage" reply). This replaces the old rule that kept an uncited second answer and only flagged it. (c) the sentence splitter no longer ends a sentence after Dr./Mr./Mrs./Ms./Prof./Sr./Jr./St./vs./e.g./i.e.
+- **What counts as a claim** (deterministic, no LLM): a sentence with no `[id]` that has at least 4 words once markup and IDs are removed, does not end in ":", and is not a statement that the segments do not cover something (regex on "does not contain/mention/cover ...", "no segment/information ...", "none of the ...", "cannot answer ..."). This is a heuristic: an uncited claim phrased like a non-coverage statement slips through, and an unusual non-claim could be dropped. Sentences with a bare ID instead of `[id]` are treated as uncited.
+- **Replay on the Phase 2 answers, no model calls:** 22 of 139 answer sentences (16%) are uncited claims, in 18 of 48 answers (nemotron 9 of 57 sentences, laguna 13 of 82). With the new prompt the model should produce fewer; the count of sentences actually flagged and dropped in a real run is reported in the README (`uncited_flagged` / `uncited_dropped` in `summary.json`).
+- **Not done:** no LLM-based decision about what is factual, and the judge prompt is unchanged (it still calls uncited sentences unsupported, which is now mostly moot because they are dropped before judging).
+
 ## Problems hit
 
 ## The existing 22-query set (Phase 2)

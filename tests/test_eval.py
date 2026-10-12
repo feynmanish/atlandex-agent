@@ -198,6 +198,13 @@ def test_langfuse_hallucination_score_mentions_unjudged_sentences_it_left_out():
     assert t.sent["unjudged_share"][0] == pytest.approx(1 / 3)
 
 
+def test_summarize_counts_uncited_sentences_flagged_and_dropped():
+    a = dict(rec(), answer="One claim here. Another claim there.",
+             citation_check={"uncited_first": ["x", "y", "z"], "dropped_uncited": ["z"]})
+    s = summarize([a, rec()])
+    assert s["uncited_flagged"] == 3 and s["uncited_dropped"] == 1
+
+
 def test_needs_review_records_never_enter_the_headline():
     agg = aggregate([rec(), rec(source="new_candidate", review=True)])
     assert list(agg["headline"]) == ["m|existing"]

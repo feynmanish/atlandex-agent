@@ -162,7 +162,7 @@ def test_uncited_answer_is_retried_once_then_flagged():
     llm = FakeLLM({
         "router": [ROUTE_SIMPLE],
         "agent": [tool_turn(("search_video", {"video": VID_A, "question": "q"})), "READY"],
-        "answer": ["Scaling laws predict loss.", "Still no ids."],
+        "answer": ["Scaling laws predict loss.", "Still no ids."],  # 2nd answer: no claim, just a short remark
     })
     res = run(llm, toolbox())
     assert llm.roles().count("answer") == 2

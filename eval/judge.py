@@ -5,9 +5,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+from atlandex_agent.citations import answer_sentences  # noqa: F401  (re-exported: tests and tools import it from here)
 from atlandex_agent.graph import NO_COVERAGE, parse_json_object
 from atlandex_agent.llm import LLM, usage_summary
-from atlandex_agent.segments import CITE_RE, extract_citations, split_sentences
+from atlandex_agent.segments import CITE_RE, extract_citations
 
 JUDGE_PROMPT = (Path(__file__).parent / "judge_prompt.md").read_text(encoding="utf-8")
 
@@ -39,13 +40,6 @@ def parse_verdicts(text: str) -> dict[int, dict[str, Any]]:
         return out
     for m in _VERDICT_RE.finditer(re.sub(r"<think>.*?</think>", "", text, flags=re.S)):
         out.setdefault(int(m.group(1)), {"verdict": m.group(2), "reason": m.group(3) or ""})
-    return out
-
-
-def answer_sentences(answer: str) -> list[str]:
-    out: list[str] = []
-    for line in answer.splitlines():
-        out += split_sentences(line)
     return out
 
 
