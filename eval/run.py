@@ -22,7 +22,8 @@ from atlandex_agent.mcp_tools import open_toolbox
 from atlandex_agent.tracing import TraceInfo, tracer_for
 
 from .judge import judge_answer
-from .metrics import aggregate, hallucination_rate, router_correct, segment_hit, video_hit
+from .metrics import (UNJUDGED_WARN_SHARE, aggregate, hallucination_rate, router_correct, segment_hit,
+                      video_hit)
 
 DEFAULT_DATASET = ROOT / "eval" / "dataset.jsonl"
 RESULTS_DIR = ROOT / "eval" / "results"
@@ -47,9 +48,9 @@ def fmt(x: float | None, pct: bool = False, nd: int = 2) -> str:
 
 def summary_markdown(agg: dict[str, Any], results_dir: Path, args: argparse.Namespace) -> str:
     tol = args.gold_tolerance_sec
-    head = (f"| model | source | runs ok/total | video hit | segment hit (±{tol} s) | router acc. | hallucination | steps | "
-            "latency p50/p95 (s) | tokens in/out | cost $ |")
-    sep = "|" + "---|" * 11
+    head = (f"| model | source | runs ok/total | video hit | segment hit (±{tol} s) | router acc. | "
+            "hallucination (judged only) | unjudged | steps | latency p50/p95 (s) | tokens in/out | cost $ |")
+    sep = "|" + "---|" * 12
     lines = [f"# Eval run {results_dir.name}", "",
              f"Command: `python -m eval.run --model {args.model}"
              f"{' --subset ' + str(args.subset) if args.subset else ''}`", "",
@@ -64,12 +65,22 @@ def summary_markdown(agg: dict[str, Any], results_dir: Path, args: argparse.Name
         seg = f"{fmt(s['segment_hit_rate'], True)} (n={s['segment_hit_n']})"
         return (f"| {m} | {src} | {s['completed']}/{s['n']} | {fmt(s['video_hit_rate'], True)} | {seg} | "
                 f"{fmt(s['router_accuracy'], True)} | "
-                f"{fmt(s['hallucination_rate'], True)} ({s['judged_sentences']} sent.) | {fmt(s['steps_mean'], nd=1)} | "
+                f"{fmt(s['hallucination_rate'], True)} ({s['judged_sentences']} sent.; "
+                f"<= {fmt(s['hallucination_rate_upper_bound'], True)} if unjudged were unsupported) | "
+                f"{fmt(s['unjudged_sentence_share'], True)} of {s['judge_sentences']} sent., "
+                f"{s['answers_fully_unjudged'] + s['answers_partly_unjudged']} of {s['judge_answers']} ans. | "
+                f"{fmt(s['steps_mean'], nd=1)} | "
                 f"{fmt(s['latency_p50'], nd=1)} / {fmt(s['latency_p95'], nd=1)} | "
                 f"{fmt(s['prompt_tokens_mean'], nd=0)} / {fmt(s['completion_tokens_mean'], nd=0)} | "
                 f"{s['cost_usd_total']:.4f} |")
 
     lines += [row(k, s) for k, s in agg["headline"].items()] or ["| (no verified records in this run) |"]
+    weak = [k for k, s in agg["headline"].items()
+            if (s["unjudged_sentence_share"] or 0) > UNJUDGED_WARN_SHARE]
+    if weak:
+        lines += ["", f"**Judge coverage warning:** for {', '.join(weak)} more than {UNJUDGED_WARN_SHARE:.0%} of "
+                      "sentences got no verdict from the judge. The hallucination rate covers judged sentences only; "
+                      "unjudged ones are not counted as clean, and the upper bound counts them all as unsupported."]
     lines += ["", "## Unverified (needs_review: true), NOT part of the headline", "", head, sep]
     lines += [row(f"{m}|new_candidate", s) for m, s in agg["unverified_not_in_headline"].items()] or ["| none |"]
     return "\n".join(lines) + "\n"
@@ -79,7 +90,9 @@ def send_scores(tracer, rec: dict[str, Any], tolerance_sec: int) -> None:
     """Attach the eval results to the run's Langfuse trace (no-op when tracing is off).
 
     - hallucination_rate: share of judged answer sentences the judge marked unsupported (0 = clean);
-      the comment lists the unsupported sentences.
+      the comment lists the unsupported sentences. Not sent when no sentence was judged: an answer the
+      judge gave no verdict for is never scored as clean.
+    - unjudged_share: share of the answer's sentences the judge gave no verdict for (0 = fully judged).
     - task_success: the answer cites a gold segment (start within the tolerance), the project's definition.
       Only sent for records that have gold segments.
     - video_hit: the answer cites a segment of a gold video. Kept separate from task_success.
@@ -91,9 +104,15 @@ def send_scores(tracer, rec: dict[str, Any], tolerance_sec: int) -> None:
     cited = rec.get("cited_ids", [])
     sentences = (rec.get("judge") or {}).get("sentences", [])
     rate = hallucination_rate(s["verdict"] for s in sentences)
+    unjudged = sum(s["verdict"] not in ("supported", "unsupported") for s in sentences)
+    if sentences:
+        tracer.score(tid, "unjudged_share", unjudged / len(sentences),
+                     f"{unjudged} of {len(sentences)} sentences unjudged")
     if rate is not None:
         bad = [f"- {s['text'][:200]} ({s['reason'][:200]})" for s in sentences if s["verdict"] == "unsupported"]
-        tracer.score(tid, "hallucination_rate", rate, "\n".join(bad) or "all judged sentences supported")
+        note = f"\n({unjudged} of {len(sentences)} sentences unjudged, not counted)" if unjudged else ""
+        tracer.score(tid, "hallucination_rate", rate,
+                     ("\n".join(bad) or "all judged sentences supported") + note)
     if rec.get("gold_segments"):
         tracer.score(tid, "task_success", segment_hit(cited, rec["gold_segments"], tolerance_sec),
                      f"cites a gold segment within +/-{tolerance_sec}s")
