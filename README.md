@@ -2,7 +2,7 @@
 
 A [LangGraph](https://langchain-ai.github.io/langgraph/) agent that answers questions about long-form video by calling the three tools of [`atlandex-mcp`](https://github.com/feynmanish/atlandex-mcp) (`find_videos`, `search_video`, `locate_quote`), plus an evaluation harness that measures video hit, segment hit (±60 s), router accuracy and hallucination rate with an LLM judge. All models run through [OpenRouter](https://openrouter.ai), on free `:free` models by default.
 
-**Status:** the agent, the eval and two full free-model evaluations (the Phase 2 baseline and the fixed version) are done; see [Results](#results). The judge was validated against reference labels from Claude, not against human labels.
+**Status:** the agent, the eval and three full free-model evaluations (the Phase 2 baseline, fixed v1 and the current fixed v2) are done; see [Results](#results). The judge was validated against reference labels from Claude, not against human labels.
 
 ## How it works
 
@@ -28,8 +28,8 @@ flowchart TD
 1. **router** classifies the question as `simple`, `multi_step` or `unclear` (JSON output).
 2. **clarify** returns one clarifying question for `unclear` and stops.
 3. **seed**: if the question links a YouTube video (all 22 existing eval questions do), that video (up to 3) is read first with `search_video` on its ID, so the agent does not spend steps finding it. It counts as a step.
-4. **agent loop**: the model sees the question and a size-capped digest of the evidence so far and either calls tools or calls the no-argument `finish` tool (a bare `READY` still works). Agent turns are capped at 600 output tokens so a turn cannot turn into a draft answer. At most 6 tool calls in total. Context is rebuilt each turn, not accumulated.
-5. **answer** writes from the retrieved passages only; every factual sentence ends with `[video_id@seconds]`.
+4. **agent loop**: the model sees the question and a size-capped digest of the evidence so far and either calls tools or calls the no-argument `finish` tool (a bare `READY` still works). Agent turns are capped in output tokens (large model 1500, small 600; hidden reasoning counts against the cap) so a turn cannot turn into a draft answer. At most 6 tool calls in total. Context is rebuilt each turn, not accumulated.
+5. **answer** writes from the retrieved passages only; every factual sentence ends with `[video_id@seconds]`. An empty answer is asked for again once with a larger budget; if it is still empty the run fails (it is never passed on to the citation check as an answer).
 6. **citation_check** verifies, without an LLM, that every cited ID was retrieved in this run and that every factual sentence cites a segment (a sentence that only says the segments do not cover something, a heading or a fragment is not a claim). On failure the answer is retried once with the offending sentences named; if it still fails, those sentences are dropped and that is recorded (`dropped`, `dropped_uncited`). An answer with nothing left becomes the "no coverage" reply.
 
 Passages carry no ID of their own, so the agent derives one: `video_id@start_sec` (`video_id@na<rank>` if the start time is unknown). The CLI maps IDs back to the tools' ready-made `citation` links.
@@ -54,7 +54,7 @@ cp .env.example .env    # then fill it in
 | `ALLOW_PAID` | default `false`; with false, any non-`:free` model raises an error |
 | `BUDGET_USD` | default `0`; paid calls that could pass it are refused before they are sent |
 
-Optional: `MODEL_SMALL`, `MODEL_LARGE`, `PAID_MODEL_SMALL`, `PAID_MODEL_LARGE`, `REQUESTS_PER_MINUTE` (20), `MAX_TOOL_STEPS` (6), `LLM_CACHE` (true).
+Optional: `MODEL_SMALL`, `MODEL_LARGE`, `PAID_MODEL_SMALL`, `PAID_MODEL_LARGE`, `REQUESTS_PER_MINUTE` (20), `MAX_TOOL_STEPS` (6), `LLM_CACHE` (true), `AGENT_MAX_TOKENS_LARGE` (1500), `AGENT_MAX_TOKENS_SMALL` (600), `AGENT_MAX_TOKENS` (overrides both; unset), `ANSWER_RETRY_MAX_TOKENS` (4000).
 
 Default models: small `poolside/laguna-xs-2.1:free`, large `nvidia/nemotron-3-super-120b-a12b:free` (also the judge). Why: [DECISIONS.md](DECISIONS.md).
 
@@ -75,6 +75,7 @@ python -m eval.run --resume eval/results/<run> --model both --include-review   #
 python -m eval.summarize eval/results/<run>                    # rebuild summary.json/md from records.jsonl
 python -m eval.rejudge --results eval/results/<run> --only-unjudged   # re-judge only answers with unjudged sentences (sidecar + report)
 python -m eval.compare --baseline eval/results/<old> --fixed eval/results/<new>   # per-query before/after (comparison.md)
+python -m eval.trajectory --run base=<dir> --run v1=<dir> --run v2=<dir> --caps base=1500:1500 --out <dir>   # follow queries through 3 runs, with cap hits and drafts
 python -m eval.sample_for_labels --n 30 --stratify             # eval/labels/to_label.csv (no verdicts) + judge_verdicts.csv
 python -m eval.agreement                                       # main judge vs the reference labels
 python -m eval.rejudge --results eval/results/<run> --judge-model <id> --name <short> --labelled-only
@@ -116,9 +117,51 @@ All tests run offline with a fake LLM, a fake toolbox and a mock HTTP transport:
 
 ## Results
 
-Two runs of the same 29 verified queries, never mixed in one table: the **fixed version** (this section) and the **Phase 2 baseline** from before the fixes (further down). Free models only, paid spend $0.00, tracing on. The judge is `nvidia/nemotron-3-super-120b-a12b:free`. Treat all of it as a small-sample snapshot, not a ranking: 22 and 7 queries per model.
+Three runs of the same 29 verified queries, never mixed in one table: **fixed v2** (current), **fixed v1** (an intermediate step, kept for the record) and the **Phase 2 baseline** from before any fix. They are linked only by the paired before/after table below. Free models only, paid spend $0.00, tracing on. The judge is `nvidia/nemotron-3-super-120b-a12b:free`. Treat all of it as a small-sample snapshot, not a ranking: 22 and 7 queries per model.
 
-### Fixed version
+### Fixed v2 (current)
+
+Run [`eval/results/20261012-fixed-v2`](eval/results/20261012-fixed-v2/summary.md). Fixed v1 plus: the agent-turn token cap is per model (large 1500, small 600, from config), an empty answer is asked again once with a 4000-token budget, and an answer that is still empty fails the run. **How the run was made:** the large model's 29 queries were re-run (`--no-cache`, budget guard on; 29/29 completed, 0 failed); the small model's half is fixed v1's 29 records, unchanged. That is valid because none of the small model's 29 answers was empty (so the retry could not have fired) and its cap stayed 600, so the code path it ran through is the same. The small rows are therefore identical in v1 and v2 by construction.
+
+**Existing 22 queries**
+
+| model | runs ok/total | video hit | segment hit (±60 s) | router acc. | hallucination (judged sentences) | unjudged sentences | steps (mean) | latency p50 / p95 (s) | tokens in / out (agent, mean) |
+|---|---|---|---|---|---|---|---|---|---|
+| nemotron-3-super-120b (large) | 22/22 | 91% | 91% | 91% | 13% (45) | 0 of 45 | 1.4 | 38.9 / 101.8 | 4,850 / 1,866 |
+| laguna-xs-2.1 (small), = v1 | 22/22 | 82% | 77% | 82% | 23% (62) | 0 of 62 | 1.9 | 83.4 / 193.2 | 5,326 / 1,022 |
+
+**New multi-step questions, the 7 verified by Claude**
+
+| model | runs ok/total | video hit | segment hit (±60 s) | router acc. | hallucination (judged sentences) | unjudged sentences | steps (mean) | latency p50 / p95 (s) | tokens in / out (agent, mean) |
+|---|---|---|---|---|---|---|---|---|---|
+| nemotron-3-super-120b (large) | 7/7 | 71% | 71% | 100% | 21% (19) | 0 of 19 | 5.3 | 107.9 / 190.8 | 16,044 / 4,826 |
+| laguna-xs-2.1 (small), = v1 | 7/7 | 86% | 86% | 86% | 38% (21) | 0 of 21 | 5.7 | 167.4 / 264.5 | 14,399 / 1,960 |
+
+Hit rates are over 22 or 7 queries, so one query is 4.5 or 14 points. Router accuracy moved from 86% (v1) to 91% for the large model on the existing set without a router change: the run is uncached, so router replies vary between runs, and that is one query.
+
+- **Large-model agent turns (71 in 29 runs):** 48 tool calls, 21 `finish` calls, **2 still cut off at the 1500 cap** without a tool call (`nc02`, `nc09`, both late in multi-step runs; the agent treats them as done and notes it), and **0 drafts** (no turn without a tool call wrote more than 200 characters). In v1, with the 600 cap, 17 of 60 turns were cut off.
+- **Empty answers:** 5 large-model runs (`ex01`, `ex10`, `ex14`, `nc03`, `nc05`) returned an empty first answer; the larger-budget retry rescued all five. No run ended with an empty answer, so none failed.
+- **What it costs:** the reasoning that the 600 cap cut off is now paid for. The large model's `finish` turns alone take a median of 545 completion tokens (tool-call turns 320), so p50 latency is 52 s per query against 34 s in v1 and 38 s in the baseline, and output tokens are up by about half against v1. Free-tier load also varies between runs, so read the latency as indicative.
+- **Uncited sentences (all 58 runs, same as v1 for the small model):** 11 flagged out of 158 final sentences, 1 dropped after the retry. The large model's 29 runs flagged 1 and dropped none.
+
+### Before / after: baseline → fixed v1 → fixed v2 (same queries, paired)
+
+Only query-runs completed in all three runs are used (large 29, small 24 of 29). Latency is wall-clock seconds per query-run; tokens are the agent's own calls (the judge is excluded). The baseline's hallucination rate uses the re-judged verdicts, so all three come from the same judge code. Hit rates pool the existing and verified-candidate queries. *Cap hits* = agent turns that used their whole token cap (cap in brackets); *drafts* = agent turns with no tool call and more than 200 characters of visible text instead of calling `finish` (only recorded from v2 on). Per-query rows: [`trajectory.md`](eval/results/20261012-fixed-v2/trajectory.md) (rebuild with `python -m eval.trajectory`, see "Run the eval").
+
+| agent model | run | steps | latency p50 / p95 (s) | tokens in / out | hallucination (judged sent.) | segment / video hit | agent turns | cap hits | drafts instead of `finish` |
+|---|---|---|---|---|---|---|---|---|---|
+| nemotron (large), 29 | baseline | 2.3 | 37.6 / 113.4 | 7,308 / 2,376 | 42% (50) | 76% / 79% | 89 | 5 (cap 1500) | n/a |
+| | fixed v1 | 1.8 | 33.8 / 81.4 | 6,014 / 1,681 | 20% (46) | 66% / 76% | 60 | **17** (cap 600) | n/a |
+| | **fixed v2** | 2.3 | 52.1 / 159.6 | 7,552 / 2,581 | **16%** (64) | **86% / 86%** | 71 | **2** (cap 1500) | **0 of 71** |
+| laguna (small), 24 | baseline | 2.0 | 54.2 / 162.9 | 5,448 / 1,018 | 40% (80) | 75% / 79% | 67 | 0 (cap 1500) | n/a |
+| | fixed v1 = v2 | 2.2 | 85.1 / 196.4 | 6,298 / 1,191 | 22% (68) | 79% / 83% | 52 | 3 (cap 600) | n/a |
+
+For the large model, v1's lower steps, tokens and latency were partly an artefact: the cap ended 17 agent turns early, and the queries that lost their tool call lost their hits too (segment hit 76% → 66%). v2 gives that reasoning room again, so steps return to baseline level, latency and tokens go above it, and the hallucination rate (42% → 16%) and segment hit (76% → 86%) are the best of the three. The old "reply READY" turn that wrote a draft answer has disappeared as a problem: 0 drafts in 71 turns.
+
+### Fixed v1 (intermediate step)
+
+**Superseded for the large model by v2 above.** Kept because it shows what the 600-token cap did to a reasoning model, and the small model's v1 records are also its v2 records.
+
 
 Run [`eval/results/20261012-062749`](eval/results/20261012-062749/summary.md) (`python -m eval.run --model both --no-cache`, then four `--resume` passes for runs the free small model dropped on upstream HTTP 429s; all 58 query-runs completed). Code: everything in [DECISIONS.md](DECISIONS.md) "Plan: three fixes" plus fix 4: judge budget and batched retry, uncited sentences checked and dropped, linked videos read first, `finish` tool with a 600-token cap on agent turns.
 
@@ -139,11 +182,11 @@ Run [`eval/results/20261012-062749`](eval/results/20261012-062749/summary.md) (`
 Task success here means the two hit rates above, kept apart as before (video hit: cites a gold video; segment hit: cites a segment inside a gold span ±60 s). Unjudged sentences are 0 everywhere, so the hallucination rate and its upper bound are the same number. Hit rates are over 22 or 7 queries, so one query is 4.5 or 14 points.
 
 - **Uncited sentences:** across the 58 runs the answer check flagged 11 factual sentences without an ID (153 final sentences in total) and dropped **1** after the retry. Replaying the old Phase 2 answers through the same check had flagged 22 of 139 sentences (16%), so the new answer prompt did most of the work and the drop is the safety net.
-- **The 600-token cap on agent turns hurts the large model.** An agent turn hit the cap in 19 of 58 runs (large 16, small 3). The large model is a reasoning model whose hidden thinking counts against the cap, so a turn can be cut off before it emits a tool call; the agent then treats it as done (noted in `notes`). This is the main reason the large model's existing-set segment hit fell from 82% to 73%: `ex01`, `ex05`, `ex09` lost their hit, and the multi-step `nc03` went from 6 steps to 1. A diagnostic re-run of those queries with the cap at 1500 (large model only, 6 queries, not part of any table above) recovered `ex01`, `ex05` and `ex09`. See DECISIONS.md.
-- **Empty answers:** 2 large-model answers are empty because the answer step ran out of its own 1500-token budget on hidden reasoning (the Phase 2 baseline had 2 such answer calls as well). An empty answer currently passes the citation check, counts as no hit, and is not retried. Not fixed here.
+- **The 600-token cap on agent turns hurts the large model.** An agent turn hit the cap in 19 of 58 runs (large 16, small 3). The large model is a reasoning model whose hidden thinking counts against the cap, so a turn can be cut off before it emits a tool call; the agent then treats it as done (noted in `notes`). This is the main reason the large model's existing-set segment hit fell from 82% to 73%: `ex01`, `ex05`, `ex09` lost their hit, and the multi-step `nc03` went from 6 steps to 1. A diagnostic re-run of those queries with the cap at 1500 (large model only, 6 queries, not part of any table above) recovered `ex01`, `ex05` and `ex09`. See DECISIONS.md. Fixed in v2 by making the cap per model.
+- **Empty answers:** 2 large-model answers are empty because the answer step ran out of its own 1500-token budget on hidden reasoning (the Phase 2 baseline had 2 such answer calls as well). An empty answer currently passes the citation check, counts as no hit, and is not retried. Not fixed here. Fixed in v2: one retry with a bigger budget, and a still-empty answer fails the run.
 - **The small model's latency is mostly provider noise.** 61–64% of its LLM calls needed retries after HTTP 429 in both runs, and about 85% of its LLM time was spent in those retried calls, so its latency rises and falls with the free tier's load rather than with the code.
 
-### Before / after (same queries, paired)
+### Baseline vs fixed v1 (paired)
 
 Only query-runs completed in both runs are compared (large 29, small 24 of 29). Latency is wall-clock seconds per query-run and tokens are the agent's own calls (the judge is excluded). The baseline's hallucination rate here uses the re-judged verdicts (judge fix applied to the Phase 2 records), so both sides come from the same judge code. Per-query rows: [`comparison.md`](eval/results/20261012-062749/comparison.md) (rebuild with `python -m eval.compare --baseline eval/results/20261011-125600 --fixed eval/results/20261012-062749`).
 
@@ -215,6 +258,7 @@ So the main judge is usable but strict: it rarely misses an unsupported claim an
 - Passage start times move with the question wording, and a minority of passages come back with no start time (0.5% to 7% in three samples, higher in an earlier ad-hoc one), which can never be a segment hit.
 - `find_videos` matches index terms, not names, so questions about a person who is not an indexed term cost the agent steps (9 completed runs used all 6). These are atlandex-mcp findings, not fixed here; see [DECISIONS.md](DECISIONS.md).
 - The Langfuse `task_success` score (added with the tracing) is the segment-hit measure above; it is not video hit.
-- The 600-token cap on agent turns truncates the large (reasoning) model in about 28% of its agent turns; a diagnostic with a cap of 1500 recovered 3 of the 4 queries it broke (see Results and DECISIONS.md). The cap is kept as specified, so the fixed-version numbers for the large model include that cost.
-- An empty answer (the answer step spends its 1500 tokens on hidden reasoning) is not detected or retried; 2 of 58 fixed-version runs and 2 baseline answer calls hit this.
+- The agent-turn token cap is per model (large 1500, small 600) because hidden reasoning tokens count against it; with 1500, 2 of 71 large-model turns were still cut off before a tool call. The large model is slower and uses more tokens than with the 600 cap (see Results): the reasoning that was cut off is now paid for.
+- The small model's fixed-v2 records are its fixed-v1 records (see Results for why that is valid); only the large model was re-run.
+- An empty answer is retried once with a 4000-token budget and fails the run if still empty; 5 of 29 large-model runs needed the retry, so the default 1500-token answer budget is tight for the large model.
 - The uncited-claim check is a heuristic (see DECISIONS.md): it can miss an uncited claim phrased like a "not covered" statement, and it treats a bare ID without brackets as uncited.
