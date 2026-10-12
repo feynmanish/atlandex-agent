@@ -15,9 +15,11 @@ class FakeLLM:
         self.model = model
         self.calls: list[CallRecord] = []
         self.prompts: list[tuple[str, list[dict]]] = []
+        self.max_tokens: list[int | None] = []  # the per-call cap each chat() was given
 
-    async def chat(self, messages, *, tools=None, role: str = "") -> LLMResponse:
+    async def chat(self, messages, *, tools=None, role: str = "", max_tokens=None) -> LLMResponse:
         self.prompts.append((role, messages))
+        self.max_tokens.append(max_tokens)
         queue = self.replies[role]
         item = queue.pop(0) if len(queue) > 1 else queue[0]
         rec = CallRecord(role=role, model=self.model, prompt_tokens=100, completion_tokens=10)

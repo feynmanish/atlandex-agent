@@ -88,11 +88,15 @@ Another session is running `eval.run` in the same folder, so no agent code is to
 - **Tests:** READY text, `finish` call, prose reply and truncated reply all end the loop; the cap is passed; the `finish` call is not counted as a step and not offered to the answer node.
 - **Check:** re-run; expect final-turn tokens mostly under 100 and latency down by about the 17% above.
 
-### 3. Judge coverage
+### 3. Judge coverage (implemented in the judge-fix PR)
+
+**Result on the Phase 2 records** (`eval/results/20261011-125600`, `eval.rejudge --only-unjudged`, main judge, free, $0.00; 7 answers re-judged, 30 sentences): unjudged sentences went from 8 of 35 (23%) to 0 for the large agent model and from 13 of 70 (19%) to 0 for the small one on the `existing` set, and from 6 of 15 (40%) to 0 on the large model's verified candidates. Hallucination rate on judged sentences (upper bound in brackets, which counts unjudged as unsupported): large/existing 41% (54%) -> 40% (40%); small/existing 39% (50%) -> 40% (40%); large/candidates 78% (87%) -> 47% (47%); small/candidates 40% -> 40%. The rate barely moves on the `existing` set, so the old numbers were not badly biased there; on the candidates they were (the missing sentences were mostly supported). Original `summary.json`/`summary.md` are unchanged; the new verdicts are in `judge_rejudged.jsonl` and the before/after table in `rejudge_report.json`. Not done: (c) below, to keep the validated judge prompt exactly as it was.
+
+Original plan:
 
 - **Change:** (a) per-call `max_tokens` for the judge: 4000 (the replies that finished needed about 1100; the empty ones were reasoning). (b) Make the second attempt different: if the first reply is cut off or empty, retry only the sentences that got no verdict, in batches of at most 3, so the retry is a smaller task and a different request (also bypasses the cache hit). (c) Shorter output: reasons of at most 12 words, and in the prompt "reason only for unsupported". (d) Ask the provider to turn reasoning down only if OpenRouter documents it for this model; not assumed.
 - **Not chosen:** a paid judge (not needed, see above); another free judge model (the cause is budget, not capability; `eval/rejudge.py` stays available for a second opinion).
-- **Existing results:** add `--only-unjudged` to `eval.rejudge`, which re-judges just the answers with unjudged sentences and writes the new verdicts into a sidecar file; merging into `records.jsonl` is a separate, explicit step so finished records are never rewritten silently.
+- **Existing results:** add `--only-unjudged` to `eval.rejudge`, which re-judges just the answers with unjudged sentences and writes the new verdicts into a sidecar file. Implemented without a merge step: `records.jsonl` and the original summary stay as they were, and `rejudge_report.json` holds the before/after numbers.
 - **Tests:** a judge fake that truncates on the first call and succeeds on the batched retry; the cap is passed; still `unjudged` (not `supported`) if the retry also fails.
 - **Done when:** unjudged sentences are at or below 10% on a re-run of the current records (target: near 0), otherwise report the remaining share as is.
 

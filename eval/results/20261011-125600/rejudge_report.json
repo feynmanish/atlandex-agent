@@ -1,0 +1,103 @@
+{
+  "judge_model": "nvidia/nemotron-3-super-120b-a12b:free",
+  "before": {
+    "nvidia/nemotron-3-super-120b-a12b:free|existing": {
+      "judge_answers": 18,
+      "answers_fully_unjudged": 2,
+      "answers_partly_unjudged": 0,
+      "judge_sentences": 35,
+      "unjudged_sentences": 8,
+      "unjudged_sentence_share": 0.22857142857142856,
+      "unjudged_answer_share": 0.1111111111111111,
+      "judged_sentences": 27,
+      "hallucination_rate": 0.4074074074074074,
+      "hallucination_rate_upper_bound": 0.5428571428571428
+    },
+    "nvidia/nemotron-3-super-120b-a12b:free|new_candidate": {
+      "judge_answers": 6,
+      "answers_fully_unjudged": 2,
+      "answers_partly_unjudged": 0,
+      "judge_sentences": 15,
+      "unjudged_sentences": 6,
+      "unjudged_sentence_share": 0.4,
+      "unjudged_answer_share": 0.3333333333333333,
+      "judged_sentences": 9,
+      "hallucination_rate": 0.7777777777777778,
+      "hallucination_rate_upper_bound": 0.8666666666666667
+    },
+    "poolside/laguna-xs-2.1:free|existing": {
+      "judge_answers": 18,
+      "answers_fully_unjudged": 2,
+      "answers_partly_unjudged": 0,
+      "judge_sentences": 70,
+      "unjudged_sentences": 13,
+      "unjudged_sentence_share": 0.18571428571428572,
+      "unjudged_answer_share": 0.1111111111111111,
+      "judged_sentences": 57,
+      "hallucination_rate": 0.38596491228070173,
+      "hallucination_rate_upper_bound": 0.5
+    },
+    "poolside/laguna-xs-2.1:free|new_candidate": {
+      "judge_answers": 2,
+      "answers_fully_unjudged": 0,
+      "answers_partly_unjudged": 0,
+      "judge_sentences": 10,
+      "unjudged_sentences": 0,
+      "unjudged_sentence_share": 0.0,
+      "unjudged_answer_share": 0.0,
+      "judged_sentences": 10,
+      "hallucination_rate": 0.4,
+      "hallucination_rate_upper_bound": 0.4
+    }
+  },
+  "after": {
+    "nvidia/nemotron-3-super-120b-a12b:free|existing": {
+      "judge_answers": 18,
+      "answers_fully_unjudged": 0,
+      "answers_partly_unjudged": 0,
+      "judge_sentences": 35,
+      "unjudged_sentences": 0,
+      "unjudged_sentence_share": 0.0,
+      "unjudged_answer_share": 0.0,
+      "judged_sentences": 35,
+      "hallucination_rate": 0.4,
+      "hallucination_rate_upper_bound": 0.4
+    },
+    "nvidia/nemotron-3-super-120b-a12b:free|new_candidate": {
+      "judge_answers": 6,
+      "answers_fully_unjudged": 0,
+      "answers_partly_unjudged": 0,
+      "judge_sentences": 15,
+      "unjudged_sentences": 0,
+      "unjudged_sentence_share": 0.0,
+      "unjudged_answer_share": 0.0,
+      "judged_sentences": 15,
+      "hallucination_rate": 0.4666666666666667,
+      "hallucination_rate_upper_bound": 0.4666666666666667
+    },
+    "poolside/laguna-xs-2.1:free|existing": {
+      "judge_answers": 18,
+      "answers_fully_unjudged": 0,
+      "answers_partly_unjudged": 0,
+      "judge_sentences": 70,
+      "unjudged_sentences": 0,
+      "unjudged_sentence_share": 0.0,
+      "unjudged_answer_share": 0.0,
+      "judged_sentences": 70,
+      "hallucination_rate": 0.4,
+      "hallucination_rate_upper_bound": 0.4
+    },
+    "poolside/laguna-xs-2.1:free|new_candidate": {
+      "judge_answers": 2,
+      "answers_fully_unjudged": 0,
+      "answers_partly_unjudged": 0,
+      "judge_sentences": 10,
+      "unjudged_sentences": 0,
+      "unjudged_sentence_share": 0.0,
+      "unjudged_answer_share": 0.0,
+      "judged_sentences": 10,
+      "hallucination_rate": 0.4,
+      "hallucination_rate_upper_bound": 0.4
+    }
+  }
+}
