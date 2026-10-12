@@ -16,14 +16,18 @@ class FakeLLM:
         self.calls: list[CallRecord] = []
         self.prompts: list[tuple[str, list[dict]]] = []
         self.max_tokens: list[int | None] = []  # the per-call cap each chat() was given
+        self.tools_offered: list[list[str]] = []  # tool names offered on each chat()
 
     async def chat(self, messages, *, tools=None, role: str = "", max_tokens=None) -> LLMResponse:
         self.prompts.append((role, messages))
         self.max_tokens.append(max_tokens)
+        self.tools_offered.append([t["function"]["name"] for t in tools or []])
         queue = self.replies[role]
         item = queue.pop(0) if len(queue) > 1 else queue[0]
         rec = CallRecord(role=role, model=self.model, prompt_tokens=100, completion_tokens=10)
         self.calls.append(rec)
+        if isinstance(item, dict) and "text" in item:  # a plain reply with a finish reason, e.g. cut off at the cap
+            return LLMResponse(item["text"], [], rec, item.get("finish_reason"))
         if isinstance(item, dict):  # tool calls
             return LLMResponse("", [{"id": f"c{len(self.calls)}", **tc} for tc in item["tools"]], rec)
         return LLMResponse(item, [], rec)

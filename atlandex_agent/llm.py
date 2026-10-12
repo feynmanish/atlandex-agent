@@ -59,6 +59,7 @@ class LLMResponse:
     content: str
     tool_calls: list[dict[str, Any]]  # [{"id", "name", "args"}]
     record: CallRecord
+    finish_reason: str | None = None  # "stop", "tool_calls", "length" (cut off at max_tokens), ...
 
 
 class LLM(Protocol):
@@ -232,7 +233,7 @@ class OpenRouterClient:
             rec = CallRecord(role=role, model=model, cached=True, paid=not is_free(model),
                              prompt_tokens=hit["prompt_tokens"], completion_tokens=hit["completion_tokens"])
             self.calls.append(rec)
-            return LLMResponse(hit["content"], hit["tool_calls"], rec)
+            return LLMResponse(hit["content"], hit["tool_calls"], rec, hit.get("finish_reason"))
 
         fallback_from = None
         t0 = self._clock()
@@ -251,6 +252,7 @@ class OpenRouterClient:
             body, attempts = await self._post(payload)
 
         msg = body["choices"][0]["message"]
+        finish_reason = body["choices"][0].get("finish_reason")
         usage = body.get("usage") or {}
         paid = not is_free(model)
         cost = float(usage.get("cost") or 0.0) if paid else 0.0
@@ -268,10 +270,10 @@ class OpenRouterClient:
         if self.s.cache_enabled:
             self.s.cache_dir.mkdir(parents=True, exist_ok=True)
             self._cache_path(key).write_text(json.dumps({
-                "content": content, "tool_calls": calls,
+                "content": content, "tool_calls": calls, "finish_reason": finish_reason,
                 "prompt_tokens": rec.prompt_tokens, "completion_tokens": rec.completion_tokens,
             }), encoding="utf-8")
-        return LLMResponse(content, calls, rec)
+        return LLMResponse(content, calls, rec, finish_reason)
 
 
 class BoundLLM:
