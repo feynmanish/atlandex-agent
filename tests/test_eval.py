@@ -7,9 +7,10 @@ import pytest
 from atlandex_agent.citations import drop_unsupported, unsupported_ids
 from atlandex_agent.segments import extract_citations, parse_tool_output, segment_id, split_sentences
 from eval import agreement, sample_for_labels
-from eval.judge import answer_sentences, build_judge_input, judge_answer
+from eval.judge import JUDGE_MAX_TOKENS, answer_sentences, build_judge_input, judge_answer, parse_verdicts
 from eval.metrics import (aggregate, hallucination_rate, judge_coverage, percentile, router_correct,
                           segment_hit, summarize, video_hit)
+from eval.rejudge import coverage_report, has_unjudged, merge_rejudged, report_table
 from eval.run import send_scores, summary_markdown
 from fakes import FakeLLM, VID_A, search_json
 
@@ -222,6 +223,81 @@ def test_judge_marks_missing_verdicts_unjudged_after_one_retry():
     llm = FakeLLM({"judge": ["garbage"]})
     res = asyncio.run(judge_answer(llm, f"First [{A}].", {A: {"text": "t"}}))
     assert res["sentences"][0]["verdict"] == "unjudged" and len(llm.calls) == 2
+
+
+def v(i, verdict="supported", reason="ok"):
+    return '{"i": %d, "verdict": "%s", "reason": "%s"}' % (i, verdict, reason)
+
+
+FOUR = f"One [{A}]. Two [{A}]. Three [{A}]. Four [{A}]."
+
+
+def test_judge_asks_with_a_larger_token_budget():
+    llm = FakeLLM({"judge": ['{"verdicts": [' + v(0) + ']}']})
+    asyncio.run(judge_answer(llm, f"First [{A}].", {A: {"text": "t"}}))
+    assert llm.max_tokens == [JUDGE_MAX_TOKENS] and JUDGE_MAX_TOKENS >= 4000
+
+
+def test_parse_verdicts_keeps_complete_verdicts_of_a_cut_off_reply():
+    cut = '{"verdicts": [' + v(0) + ', ' + v(1, "unsupported", 'says \\"x\\" which is not in the text') + ', {"i": 2, "verdi'
+    got = parse_verdicts(cut)
+    assert sorted(got) == [0, 1] and got[1]["verdict"] == "unsupported" and "not in the text" in got[1]["reason"]
+    assert parse_verdicts("") == {} and parse_verdicts("no json at all") == {}
+
+
+def test_judge_keeps_what_a_cut_off_reply_delivered_and_re_asks_only_for_the_rest():
+    llm = FakeLLM({"judge": ['{"verdicts": [' + v(0) + ', ' + v(1) + ', {"i": 2, "verd',
+                             '{"verdicts": [' + v(0, "unsupported") + ']}']})
+    res = asyncio.run(judge_answer(llm, f"One [{A}]. Two [{A}]. Three [{A}].", {A: {"text": "t"}}))
+    assert [s["verdict"] for s in res["sentences"]] == ["supported", "supported", "unsupported"]
+    assert len(llm.calls) == 2
+    retry_prompt = llm.prompts[1][1][1]["content"]
+    assert "Three" in retry_prompt and "One" not in retry_prompt and "Two" not in retry_prompt
+    assert llm.max_tokens == [JUDGE_MAX_TOKENS, JUDGE_MAX_TOKENS]
+
+
+def test_judge_retries_an_empty_reply_in_batches_of_three_and_maps_indices_back():
+    llm = FakeLLM({"judge": ["",  # reasoning ate the budget: empty reply
+                             '{"verdicts": [' + v(0) + ', ' + v(1) + ', ' + v(2, "unsupported") + ']}',
+                             '{"verdicts": [' + v(0, "unsupported") + ']}']})
+    res = asyncio.run(judge_answer(llm, FOUR, {A: {"text": "t"}}))
+    assert [s["verdict"] for s in res["sentences"]] == ["supported", "supported", "unsupported", "unsupported"]
+    assert len(llm.calls) == 3  # all four, then [0,1,2], then [3]
+    assert "Four" in llm.prompts[2][1][1]["content"] and "Three" not in llm.prompts[2][1][1]["content"]
+
+
+def test_judge_never_turns_a_failed_retry_into_a_verdict():
+    llm = FakeLLM({"judge": ["", "", ""]})
+    res = asyncio.run(judge_answer(llm, FOUR, {A: {"text": "t"}}))
+    assert [s["verdict"] for s in res["sentences"]] == ["unjudged"] * 4
+    assert len(llm.calls) == 3  # one full request, then two retry batches
+
+
+def test_rejudge_picks_only_answers_with_unjudged_sentences():
+    assert has_unjudged(rec(verdicts=("supported", "unjudged")))
+    assert not has_unjudged(rec(verdicts=("supported", "unsupported")))
+    assert not has_unjudged({"judge": None})
+
+
+def test_merge_rejudged_replaces_only_rejudged_answers_and_keeps_old_judgement_on_failure():
+    a, b, c = (dict(rec(verdicts=("unjudged", "unjudged")), id=i) for i in "abc")
+    new = {"model": "j", "sentences": [{"verdict": "supported"}, {"verdict": "unsupported"}], "usage": {}}
+    merged = merge_rejudged([a, b, c], [{"id": "a", "model": "m", "judge": new},
+                                         {"id": "b", "model": "m", "judge": None, "error": "LLMUnavailable"}])
+    assert merged[0]["judge"] is new
+    assert merged[1]["judge"] is b["judge"] and merged[2]["judge"] is c["judge"]  # still unjudged, not clean
+    assert a["judge"]["sentences"][0]["verdict"] == "unjudged"  # the input records are not modified
+
+
+def test_coverage_report_before_and_after_a_rejudge():
+    old = [dict(rec(verdicts=("supported", "unsupported")), id="a"), dict(rec(verdicts=("unjudged", "unjudged")), id="b")]
+    new = {"model": "j", "sentences": [{"verdict": "unsupported"}, {"verdict": "supported"}], "usage": {}}
+    before = coverage_report(old)["m|existing"]
+    after = coverage_report(merge_rejudged(old, [{"id": "b", "model": "m", "judge": new}]))["m|existing"]
+    assert before["unjudged_sentences"] == 2 and before["unjudged_sentence_share"] == 0.5
+    assert before["hallucination_rate"] == 0.5 and before["hallucination_rate_upper_bound"] == 0.75
+    assert after["unjudged_sentences"] == 0 and after["hallucination_rate"] == 0.5
+    assert "| before |" in report_table({"m|existing": before}, {"m|existing": after})
 
 
 def test_judge_skips_the_no_coverage_reply():

@@ -63,14 +63,14 @@ class TracedLLM:
     def calls(self):
         return self._inner.calls
 
-    async def chat(self, messages, *, tools=None, role: str = ""):
+    async def chat(self, messages, *, tools=None, role: str = "", max_tokens=None):
         with self._client.start_as_current_observation(
             as_type="generation", name=f"llm:{role or 'chat'}", model=self._inner.model,
             input=[{**m, "content": _clip(m.get("content"))} for m in messages],
             metadata={"role": role, "tools_offered": [t["function"]["name"] for t in tools or []]},
         ) as gen:
             try:
-                r = await self._inner.chat(messages, tools=tools, role=role)
+                r = await self._inner.chat(messages, tools=tools, role=role, max_tokens=max_tokens)
             except Exception as e:
                 gen.update(level="ERROR", status_message=f"{type(e).__name__}: {str(e)[:300]}")
                 raise

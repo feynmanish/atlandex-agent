@@ -73,6 +73,7 @@ class LLM(Protocol):
         *,
         tools: list[dict[str, Any]] | None = None,
         role: str = "",
+        max_tokens: int | None = None,
     ) -> LLMResponse: ...
 
 
@@ -209,13 +210,16 @@ class OpenRouterClient:
         *,
         tools: list[dict[str, Any]] | None = None,
         role: str = "",
+        max_tokens: int | None = None,
     ) -> LLMResponse:
+        """`max_tokens` overrides Settings.max_tokens for this call (the judge needs more, agent turns less)."""
         self._guard(model)
+        max_tokens = max_tokens or self.s.max_tokens
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "temperature": self.s.temperature,
-            "max_tokens": self.s.max_tokens,
+            "max_tokens": max_tokens,
             "usage": {"include": True},
         }
         if tools:
@@ -234,7 +238,7 @@ class OpenRouterClient:
         t0 = self._clock()
         try:
             if not is_free(model):
-                await self._check_budget(model, messages, self.s.max_tokens)
+                await self._check_budget(model, messages, max_tokens)
             body, attempts = await self._post(payload)
         except LLMUnavailable:
             fb = self.s.paid_fallback_for(model)
@@ -243,7 +247,7 @@ class OpenRouterClient:
             log.warning("Free model '%s' unavailable; falling back to paid '%s'", model, fb)
             fallback_from, model = model, fb
             payload["model"] = model
-            await self._check_budget(model, messages, self.s.max_tokens)
+            await self._check_budget(model, messages, max_tokens)
             body, attempts = await self._post(payload)
 
         msg = body["choices"][0]["message"]
@@ -280,8 +284,8 @@ class BoundLLM:
     def calls(self) -> list[CallRecord]:
         return self._client.calls
 
-    async def chat(self, messages, *, tools=None, role: str = "") -> LLMResponse:
-        return await self._client.chat(self.model, messages, tools=tools, role=role)
+    async def chat(self, messages, *, tools=None, role: str = "", max_tokens: int | None = None) -> LLMResponse:
+        return await self._client.chat(self.model, messages, tools=tools, role=role, max_tokens=max_tokens)
 
 
 def _safe_json(r: httpx.Response) -> dict[str, Any]:
