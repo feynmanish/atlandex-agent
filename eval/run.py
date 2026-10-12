@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from atlandex_agent.config import ROOT, Settings
-from atlandex_agent.graph import run_agent
+from atlandex_agent.graph import EmptyAnswerError, run_agent
 from atlandex_agent.llm import (BudgetExceeded, LLMError, LLMUnavailable, OpenRouterClient,
                                 PaidCallBlocked)
 from atlandex_agent.mcp_tools import open_toolbox
@@ -24,6 +24,9 @@ from atlandex_agent.tracing import TraceInfo, tracer_for
 from .judge import judge_answer
 from .metrics import (UNJUDGED_WARN_SHARE, aggregate, hallucination_rate, router_correct, segment_hit,
                       video_hit)
+
+# A run that ends with one of these is recorded as failed (not as a miss) and is re-run by --resume.
+RUN_ERRORS = (LLMUnavailable, LLMError, EmptyAnswerError)
 
 DEFAULT_DATASET = ROOT / "eval" / "dataset.jsonl"
 RESULTS_DIR = ROOT / "eval" / "results"
@@ -185,7 +188,7 @@ async def amain(args: argparse.Namespace) -> int:
                 except (PaidCallBlocked, BudgetExceeded) as e:
                     stop = e
                     rec.update(model=llm.model, error=f"{type(e).__name__}: {e}")
-                except (LLMUnavailable, LLMError) as e:
+                except RUN_ERRORS as e:
                     rec.update(model=llm.model, error=f"{type(e).__name__}: {e}")
                 records.append(rec)
                 with records_path.open("a", encoding="utf-8") as f:

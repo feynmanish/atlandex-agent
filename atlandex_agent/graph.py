@@ -31,6 +31,10 @@ FINISH_SPEC = {"type": "function", "function": {
 NO_COVERAGE = "No indexed video covered this question well enough to answer it."
 
 
+class EmptyAnswerError(RuntimeError):
+    """The model returned an empty answer even with a larger budget. The run is failed, not passed."""
+
+
 class State(TypedDict, total=False):
     question: str
     route: str
@@ -43,6 +47,7 @@ class State(TypedDict, total=False):
     tool_log: list[dict[str, Any]]
     segments: dict[str, dict[str, Any]]
     agent_done: bool
+    agent_turns: list[dict[str, Any]]  # what each agent turn did (for diagnosing caps and drafts)
     nudged: bool
     # citation check
     answer_attempts: int
@@ -114,20 +119,26 @@ def build_graph(llm: LLM, tools: ToolBox, settings: Settings):
         msgs = [{"role": "system", "content": prompts.AGENT_SYSTEM.format(max_steps=settings.max_tool_steps)},
                 {"role": "user", "content": user}]
         # The capped reply can only be a tool call, `finish`, or a short READY; it cannot turn into a draft answer.
-        r = await llm.chat(msgs, tools=specs + [FINISH_SPEC], role="agent", max_tokens=settings.agent_max_tokens)
+        # The cap depends on the model: hidden reasoning tokens count against it (see Settings.agent_cap_for).
+        cap = settings.agent_cap_for(llm.model)
+        r = await llm.chat(msgs, tools=specs + [FINISH_SPEC], role="agent", max_tokens=cap)
         calls = [c for c in r.tool_calls if c["name"] != FINISH_TOOL]
+        turns = state.get("agent_turns", []) + [{
+            "tool_calls": [c["name"] for c in r.tool_calls], "finish": len(calls) < len(r.tool_calls),
+            "text_chars": len(r.content or ""), "completion_tokens": r.record.completion_tokens,
+            "finish_reason": r.finish_reason, "cap": cap}]
         if calls:  # `finish` next to real calls is ignored: the real calls run, the model can finish next turn
-            return {"pending": calls, "agent_done": False}
+            return {"pending": calls, "agent_done": False, "agent_turns": turns}
         if steps == 0 and not state.get("nudged"):
             # A model that answers before any search would produce an ungrounded answer.
-            return {"pending": [], "agent_done": False, "nudged": True,
+            return {"pending": [], "agent_done": False, "nudged": True, "agent_turns": turns,
                     "notes": state.get("notes", []) + ["agent skipped tools on first turn; nudged"],
                     "evidence": state.get("evidence", []) + [
                         {"header": "system", "body": "You must call find_videos or search_video before answering."}]}
         notes = state.get("notes", [])
         if r.finish_reason == "length" and not r.tool_calls:
             notes = notes + ["agent turn hit the token cap without a tool call; treated as done"]
-        return {"pending": [], "agent_done": True, "notes": notes}
+        return {"pending": [], "agent_done": True, "notes": notes, "agent_turns": turns}
 
     async def seed(state: State) -> State:
         """Questions that link their video (all 22 existing eval questions do): read that video first."""
@@ -180,14 +191,23 @@ def build_graph(llm: LLM, tools: ToolBox, settings: Settings):
         user = f"Question: {state['question']}\n\nSegments:\n{listing}"
         if state.get("feedback"):
             user += f"\n\n{state['feedback']}"
-        r = await llm.chat([{"role": "system", "content": prompts.ANSWER_SYSTEM},
-                            {"role": "user", "content": user}], role="answer")
-        return {"answer": normalize_citations(r.content.strip()),
+        msgs = [{"role": "system", "content": prompts.ANSWER_SYSTEM}, {"role": "user", "content": user}]
+        r = await llm.chat(msgs, role="answer")
+        notes = state.get("notes", [])
+        if not r.content.strip():
+            # A reasoning model can spend the whole answer budget thinking and return nothing. Ask once more
+            # with a bigger budget; if that is empty too, citation_check fails the run.
+            r = await llm.chat(msgs, role="answer", max_tokens=settings.answer_retry_max_tokens)
+            notes = notes + ["answer was empty; asked again with a larger budget"
+                             + ("" if r.content.strip() else " (still empty)")]
+        return {"answer": normalize_citations(r.content.strip()), "notes": notes,
                 "answer_attempts": state.get("answer_attempts", 0) + 1}
 
     async def citation_check(state: State) -> State:
         retrieved = state.get("segments", {}).keys()
         answer = state["answer"]
+        if not answer.strip():  # nothing to check is not a pass: an empty answer is a failed run
+            raise EmptyAnswerError("the model returned an empty answer, also with a larger token budget")
         bad = unsupported_ids(answer, retrieved)
         # Factual sentences that cite nothing (the judge flagged these most often). Only meaningful when
         # something was retrieved; the fixed "no coverage" reply has no segments to cite.
@@ -279,6 +299,7 @@ async def run_agent(question: str, llm: LLM, tools: ToolBox, settings: Settings,
             "latency_sec": round(latency, 2),
             "usage": usage_summary(records),
             "llm_calls": records_to_dicts(records),
+            "agent_turns": final.get("agent_turns", []),
         }
         run.finish({k: result[k] for k in ("answer", "model", "route", "route_reason", "cited_ids", "retrieved_ids",
                                            "steps", "citation_check", "notes", "latency_sec", "usage")})

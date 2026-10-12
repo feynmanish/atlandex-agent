@@ -8,7 +8,7 @@ import logging
 import sys
 
 from .config import Settings
-from .graph import run_agent
+from .graph import EmptyAnswerError, run_agent
 from .llm import OpenRouterClient
 from .mcp_tools import open_toolbox
 from .tracing import tracer_for
@@ -48,6 +48,9 @@ async def amain(args: argparse.Namespace) -> int:
     try:
         async with open_toolbox(settings) as tools:
             res = await run_agent(args.question, llm, tools, settings)
+    except EmptyAnswerError as e:  # a failed run, not an answer
+        print(f"Run failed: {e}.", file=sys.stderr)
+        return 1
     finally:
         await client.aclose()
         tracer.flush()
