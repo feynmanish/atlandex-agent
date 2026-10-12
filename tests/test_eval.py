@@ -11,7 +11,7 @@ from eval.judge import JUDGE_MAX_TOKENS, answer_sentences, build_judge_input, ju
 from eval.metrics import (aggregate, hallucination_rate, judge_coverage, percentile, router_correct,
                           segment_hit, summarize, video_hit)
 from eval.rejudge import coverage_report, has_unjudged, merge_rejudged, report_table
-from eval.run import send_scores, summary_markdown
+from eval.run import portable_args, send_scores, summary_markdown
 from fakes import FakeLLM, VID_A, search_json
 
 A = f"{VID_A}@120"
@@ -159,6 +159,19 @@ class _Args:
     gold_tolerance_sec = 60
     model = "small"
     subset = None
+
+
+def test_summary_command_has_no_absolute_paths():
+    import argparse
+    from atlandex_agent.config import ROOT
+
+    a = argparse.Namespace(dataset=str(ROOT / "eval" / "dataset.jsonl"), resume=str(ROOT / "eval" / "results" / "r1"),
+                           model="both", subset=None, other=r"C:\Somewhere\else\x.jsonl")
+    out = portable_args(a)
+    assert out["dataset"] == "eval/dataset.jsonl" and out["resume"] == "eval/results/r1"
+    assert out["other"] == "x.jsonl"  # outside the repo: only the file name is kept
+    assert out["model"] == "both" and out["subset"] is None
+    assert str(ROOT) not in repr(out)
 
 
 def test_summary_markdown_states_the_unjudged_share_and_warns_above_ten_percent(tmp_path):
