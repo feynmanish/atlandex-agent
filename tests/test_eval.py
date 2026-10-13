@@ -163,10 +163,14 @@ class _Args:
 
 def test_summary_command_has_no_absolute_paths():
     import argparse
+    import tempfile
+    from pathlib import Path
+
     from atlandex_agent.config import ROOT
 
+    outside = Path(tempfile.gettempdir()) / "x.jsonl"  # absolute on every OS, and not inside the repo
     a = argparse.Namespace(dataset=str(ROOT / "eval" / "dataset.jsonl"), resume=str(ROOT / "eval" / "results" / "r1"),
-                           model="both", subset=None, other=r"C:\Somewhere\else\x.jsonl")
+                           model="both", subset=None, other=str(outside))
     out = portable_args(a)
     assert out["dataset"] == "eval/dataset.jsonl" and out["resume"] == "eval/results/r1"
     assert out["other"] == "x.jsonl"  # outside the repo: only the file name is kept
