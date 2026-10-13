@@ -69,3 +69,8 @@ def search_json(video: str, *passages: tuple[int, str]) -> str:
         {"rank": i + 1, "text": text, "start_sec": s, "timestamp": f"{s // 60}:{s % 60:02d}",
          "citation": f"[Video {video[0]}, {s // 60}:{s % 60:02d}](https://youtu.be/{video}?t={s})"}
         for i, (s, text) in enumerate(passages)]})
+
+
+def json_reply(obj: Any) -> str:
+    """A JSON text reply, e.g. for the supervisor or verify roles."""
+    return json.dumps(obj)

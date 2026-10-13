@@ -40,6 +40,7 @@ class TraceInfo:
     run_id: str = ""  # eval results directory name; groups all traces of one eval run (Langfuse session)
     query_id: str = ""  # dataset record id
     model_alias: str = ""  # small | large | explicit id
+    arch: str = ""  # single | multi
     extra_tags: list[str] = field(default_factory=list)
 
 
@@ -193,6 +194,9 @@ class LangfuseTracer(NullTracer):
             meta["query_id"] = info.query_id
         if info.model_alias:
             meta["model_alias"] = info.model_alias
+        if info.arch:
+            tags.append(f"arch:{info.arch}")
+            meta["arch"] = info.arch
         tags += info.extra_tags
         with self.client.start_as_current_observation(
             as_type="span", name="atlandex-agent", input={"question": question}, metadata=meta,

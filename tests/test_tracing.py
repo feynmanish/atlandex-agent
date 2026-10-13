@@ -198,7 +198,8 @@ def test_one_run_is_one_trace_with_router_llm_tool_and_citation_check_spans(live
     assert out["route"] == "simple" and out["citation_check"] == {"first_failed": False, "retried": False, "dropped": []}
     assert out["usage"]["prompt_tokens"] == 500 and out["cited_ids"] == [SEG]
     assert root["session.id"] == "20260101-000000"
-    assert set(root["langfuse.trace.tags"]) == {"model:fake/model:free", "run:20260101-000000", "query:Q7"}
+    assert set(root["langfuse.trace.tags"]) == {"model:fake/model:free", "run:20260101-000000", "query:Q7",
+                                                    "arch:single"}
     assert root["langfuse.trace.metadata.query_id"] == "Q7"
     assert root["langfuse.trace.metadata.model_alias"] == "small"
 

@@ -69,3 +69,31 @@ def test_run_agent_defaults_to_the_single_architecture():
     assert res["arch"] == "single" and res["supervisor_turns"] == [] and res["verify"] == {}
     with pytest.raises(ValueError):
         asyncio.run(run_agent("q?", llm, toolbox(), settings(), arch="swarm"))
+
+
+# --- the multi-agent graph under the same cap -----------------------------------------------------------------
+
+def test_multi_agent_worst_case_stays_under_the_cap_and_still_ends_with_an_answer():
+    """The supervisor always searches, the search agent never finishes and the verifier flags everything."""
+    from test_multi_agent import SEARCH, flag_all, run as run_multi
+
+    searches = [tool_turn(("search_video", {"video": VID_A, "question": f"q{i}"})) for i in range(10)]
+    llm = FakeLLM({"router": [ROUTE_SIMPLE], "supervisor": [SEARCH], "agent": searches,
+                   "answer": [f"Scaling laws predict loss [{SEG}]."], "verify": [flag_all()]})
+    res = run_multi(llm)
+    assert res["llm_calls_used"] == len(llm.calls) <= 13
+    assert res["answer"]  # an answer, not an exception
+    assert any("call budget" in n for n in res["notes"])
+
+
+def test_multi_agent_skips_verification_when_the_budget_is_gone():
+    from test_multi_agent import ANSWER, flag_all, run as run_multi
+
+    # cap 7: router 1, supervisor 1, answer with its empty retry 2, verify 1, then the rewrite (also empty
+    # first) takes the last two calls, so the second verification round has none left
+    llm = FakeLLM({"router": [ROUTE_SIMPLE], "supervisor": [ANSWER], "agent": ["READY"],
+                   "answer": ["", f"Scaling laws predict loss [{SEG}].", "", f"Scaling laws predict loss [{SEG}]."],
+                   "verify": [flag_all()]})
+    res = run_multi(llm, question="About https://youtu.be/AAAAAAAAAAA: scaling?", max_llm_calls_per_run=7)
+    assert res["llm_calls_used"] <= 7
+    assert res["verify"]["skipped_budget"] is True and res["verify"]["rounds"] == 1
