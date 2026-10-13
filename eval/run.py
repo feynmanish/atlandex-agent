@@ -16,7 +16,7 @@ from typing import Any
 
 from atlandex_agent.config import ROOT, Settings
 from atlandex_agent.graph import EmptyAnswerError, run_agent
-from atlandex_agent.llm import (BudgetExceeded, LLMError, LLMUnavailable, OpenRouterClient,
+from atlandex_agent.llm import (BudgetExceeded, CallBudgetExceeded, LLMError, LLMUnavailable, OpenRouterClient,
                                 PaidCallBlocked)
 from atlandex_agent.mcp_tools import open_toolbox
 from atlandex_agent.tracing import TraceInfo, tracer_for
@@ -26,7 +26,7 @@ from .metrics import (UNJUDGED_WARN_SHARE, aggregate, hallucination_rate, router
                       video_hit)
 
 # A run that ends with one of these is recorded as failed (not as a miss) and is re-run by --resume.
-RUN_ERRORS = (LLMUnavailable, LLMError, EmptyAnswerError)
+RUN_ERRORS = (LLMUnavailable, LLMError, EmptyAnswerError, CallBudgetExceeded)
 
 DEFAULT_DATASET = ROOT / "eval" / "dataset.jsonl"
 RESULTS_DIR = ROOT / "eval" / "results"

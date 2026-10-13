@@ -52,6 +52,22 @@ class Settings:
     max_tool_steps: int = 6
     evidence_char_budget: int = 12000
 
+    # Which graph runs: "single" (router -> agent loop -> answer -> citation check) or "multi" (adds a supervisor
+    # that delegates search tasks, and a verification agent that checks each answer sentence against its segment).
+    arch: str = "single"
+    # multi only. A search task gets at most this many of the shared max_tool_steps: with 6 steps in total that is
+    # two tasks of three, enough to compare two videos without letting one task use the whole allowance.
+    search_steps_per_task: int = 3
+    # multi only. Supervisor turns per run, the last of which can only hand over to the answer step
+    # (search, search, answer).
+    max_supervisor_turns: int = 3
+    # Output cap of a verify call. None means max_tokens (1500), the same as the other short non-agent roles.
+    # The smoke run decides whether the large (reasoning) model needs 4000 here; see DECISIONS.md.
+    verify_max_tokens: int | None = None
+    # Logical LLM calls per run, for both architectures. 13 is the most the single agent can make (router 2,
+    # agent turns 7, answer 2, one citation rewrite 2), so the cap never changes single and multi may not use more.
+    max_llm_calls_per_run: int = 13
+
     cache_enabled: bool = True
     cache_dir: Path = ROOT / ".cache" / "llm"
 
@@ -98,6 +114,11 @@ class Settings:
             budget_usd=float(env("BUDGET_USD", "0") or 0),
             requests_per_minute=int(env("REQUESTS_PER_MINUTE", str(d.requests_per_minute))),
             max_tool_steps=int(env("MAX_TOOL_STEPS", str(d.max_tool_steps))),
+            arch=env("AGENT_ARCH", d.arch) or d.arch,
+            search_steps_per_task=int(env("SEARCH_STEPS_PER_TASK", str(d.search_steps_per_task))),
+            max_supervisor_turns=int(env("MAX_SUPERVISOR_TURNS", str(d.max_supervisor_turns))),
+            verify_max_tokens=int(env("VERIFY_MAX_TOKENS") or 0) or None,
+            max_llm_calls_per_run=int(env("MAX_LLM_CALLS_PER_RUN", str(d.max_llm_calls_per_run))),
             agent_max_tokens_small=int(env("AGENT_MAX_TOKENS_SMALL", str(d.agent_max_tokens_small))),
             agent_max_tokens_large=int(env("AGENT_MAX_TOKENS_LARGE", str(d.agent_max_tokens_large))),
             agent_max_tokens=int(env("AGENT_MAX_TOKENS") or 0) or None,

@@ -40,6 +40,14 @@ class LLMError(RuntimeError):
     """A non-retryable error response from the provider."""
 
 
+class CallBudgetExceeded(RuntimeError):
+    """A run tried to make more LLM calls than Settings.max_llm_calls_per_run allows.
+
+    A safety net, not a control path: the graph asks `CallBudget.left()` before optional calls and degrades
+    instead, so this should never be raised by a graph that behaves.
+    """
+
+
 @dataclass
 class CallRecord:
     role: str
@@ -288,6 +296,35 @@ class BoundLLM:
 
     async def chat(self, messages, *, tools=None, role: str = "", max_tokens: int | None = None) -> LLMResponse:
         return await self._client.chat(self.model, messages, tools=tools, role=role, max_tokens=max_tokens)
+
+
+class CallBudget:
+    """Counts the LLM calls of one run and refuses the call after the cap.
+
+    Wraps any LLM (see the protocol above). It counts logical calls, not HTTP attempts: retries after a 429 or
+    5xx happen inside the client and are reported separately (CallRecord.attempts). A call that fails still
+    counts, because it was still a request.
+    """
+
+    def __init__(self, inner: LLM, cap: int):
+        self._inner, self.cap, self.used = inner, cap, 0
+
+    @property
+    def model(self) -> str:
+        return self._inner.model
+
+    @property
+    def calls(self) -> list[CallRecord]:
+        return self._inner.calls
+
+    def left(self) -> int:
+        return self.cap - self.used
+
+    async def chat(self, messages, *, tools=None, role: str = "", max_tokens: int | None = None) -> LLMResponse:
+        if self.used >= self.cap:
+            raise CallBudgetExceeded(f"{self.cap} LLM calls already made in this run (role '{role}' refused)")
+        self.used += 1
+        return await self._inner.chat(messages, tools=tools, role=role, max_tokens=max_tokens)
 
 
 def _safe_json(r: httpx.Response) -> dict[str, Any]:

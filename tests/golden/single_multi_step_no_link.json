@@ -1,0 +1,175 @@
+{
+  "max_tokens": [
+    null,
+    600,
+    600,
+    600,
+    null
+  ],
+  "prompts": [
+    [
+      "router",
+      [
+        {
+          "content": "You route questions for a search agent over an index of long-form videos (talks, podcasts, webinars).\nClassify the user's question as exactly one of:\n- \"simple\": answerable with one search (one topic, at most one video).\n- \"multi_step\": needs several searches or several videos (comparisons, follow-ups, \"which video ... and what does it say\").\n- \"unclear\": too vague to search without more information (no identifiable topic, person or video).\nReply with only a JSON object: {\"route\": \"simple\" | \"multi_step\" | \"unclear\", \"reason\": \"<one short sentence>\"}",
+          "role": "system"
+        },
+        {
+          "content": "How do A and B differ on scaling versus data?",
+          "role": "user"
+        }
+      ]
+    ],
+    [
+      "agent",
+      [
+        {
+          "content": "You research questions using an index of long-form videos. Tools:\n- find_videos(term): which indexed videos discuss a concept, person or product. Pass a short canonical term of 1-4 words, never a sentence. If nothing matches, retry once with a shorter or more common form.\n- search_video(video, question): the passages of ONE video that answer a question. Only call it on videos whose `searchable` is true. If it reports no searchable transcript, do not retry that video.\n- locate_quote(video, phrase): when a phrase is spoken. Use only with words you already saw in a passage.\nfind_videos only shows where a term comes up; it does not tell you what was said. When it lists searchable videos relevant to the question, read them with search_video before finishing; a chapter result alone is not evidence of what a speaker said. If a person's name finds nothing, search the topic term instead.\nYou get at most 6 tool calls in total. Use as few as the question needs.\nIf the question links a video, its passages were already fetched and are in the evidence; do not search for that video again.\nEach turn you see the question and the evidence collected so far. Either call the tools you still need, or, once the evidence is enough (or nothing more can be found), call the finish tool. Never write the answer here: the answer is written in a later step, so a turn without a tool call should be the finish call or the single word READY.",
+          "role": "system"
+        },
+        {
+          "content": "Question: How do A and B differ on scaling versus data?\nRoute: multi_step; plan the searches you need.\nTool calls used: 0/6.\n\nEvidence so far:\n(none yet)\n\nCall a tool if you still need evidence; otherwise call the finish tool (or reply with exactly: READY)",
+          "role": "user"
+        }
+      ]
+    ],
+    [
+      "agent",
+      [
+        {
+          "content": "You research questions using an index of long-form videos. Tools:\n- find_videos(term): which indexed videos discuss a concept, person or product. Pass a short canonical term of 1-4 words, never a sentence. If nothing matches, retry once with a shorter or more common form.\n- search_video(video, question): the passages of ONE video that answer a question. Only call it on videos whose `searchable` is true. If it reports no searchable transcript, do not retry that video.\n- locate_quote(video, phrase): when a phrase is spoken. Use only with words you already saw in a passage.\nfind_videos only shows where a term comes up; it does not tell you what was said. When it lists searchable videos relevant to the question, read them with search_video before finishing; a chapter result alone is not evidence of what a speaker said. If a person's name finds nothing, search the topic term instead.\nYou get at most 6 tool calls in total. Use as few as the question needs.\nIf the question links a video, its passages were already fetched and are in the evidence; do not search for that video again.\nEach turn you see the question and the evidence collected so far. Either call the tools you still need, or, once the evidence is enough (or nothing more can be found), call the finish tool. Never write the answer here: the answer is written in a later step, so a turn without a tool call should be the finish call or the single word READY.",
+          "role": "system"
+        },
+        {
+          "content": "Question: How do A and B differ on scaling versus data?\nRoute: multi_step; plan the searches you need.\nTool calls used: 1/6.\n\nEvidence so far:\nStep 1: find_videos({\"term\": \"scaling\"})\nfind_videos term='t': 2 matches\n- video_id=AAAAAAAAAAA \"Video A\" (Ch) searchable=True chapter 'Part 1' at 1:00 [AAAAAAAAAAA@60]\n- video_id=BBBBBBBBBBB \"Video B\" (Ch) searchable=True chapter 'Part 1' at 1:30 [BBBBBBBBBBB@90]\n\nCall a tool if you still need evidence; otherwise call the finish tool (or reply with exactly: READY)",
+          "role": "user"
+        }
+      ]
+    ],
+    [
+      "agent",
+      [
+        {
+          "content": "You research questions using an index of long-form videos. Tools:\n- find_videos(term): which indexed videos discuss a concept, person or product. Pass a short canonical term of 1-4 words, never a sentence. If nothing matches, retry once with a shorter or more common form.\n- search_video(video, question): the passages of ONE video that answer a question. Only call it on videos whose `searchable` is true. If it reports no searchable transcript, do not retry that video.\n- locate_quote(video, phrase): when a phrase is spoken. Use only with words you already saw in a passage.\nfind_videos only shows where a term comes up; it does not tell you what was said. When it lists searchable videos relevant to the question, read them with search_video before finishing; a chapter result alone is not evidence of what a speaker said. If a person's name finds nothing, search the topic term instead.\nYou get at most 6 tool calls in total. Use as few as the question needs.\nIf the question links a video, its passages were already fetched and are in the evidence; do not search for that video again.\nEach turn you see the question and the evidence collected so far. Either call the tools you still need, or, once the evidence is enough (or nothing more can be found), call the finish tool. Never write the answer here: the answer is written in a later step, so a turn without a tool call should be the finish call or the single word READY.",
+          "role": "system"
+        },
+        {
+          "content": "Question: How do A and B differ on scaling versus data?\nRoute: multi_step; plan the searches you need.\nTool calls used: 3/6.\n\nEvidence so far:\nStep 1: find_videos({\"term\": \"scaling\"})\nfind_videos term='t': 2 matches\n- video_id=AAAAAAAAAAA \"Video A\" (Ch) searchable=True chapter 'Part 1' at 1:00 [AAAAAAAAAAA@60]\n- video_id=BBBBBBBBBBB \"Video B\" (Ch) searchable=True chapter 'Part 1' at 1:30 [BBBBBBBBBBB@90]\n\nStep 2: search_video({\"video\": \"AAAAAAAAAAA\", \"question\": \"q\"})\nsearch_video video_id=AAAAAAAAAAA \"Video A\"\n[AAAAAAAAAAA@120] (2:00) scaling laws predict loss\n\nStep 3: search_video({\"video\": \"BBBBBBBBBBB\", \"question\": \"q\"})\nsearch_video video_id=BBBBBBBBBBB \"Video B\"\n[BBBBBBBBBBB@300] (5:00) data quality matters most\n\nCall a tool if you still need evidence; otherwise call the finish tool (or reply with exactly: READY)",
+          "role": "user"
+        }
+      ]
+    ],
+    [
+      "answer",
+      [
+        {
+          "content": "Answer the question using ONLY the segments listed below. Rules:\n- EVERY sentence that states a fact ends with the ID of the segment that supports it, written in square brackets exactly as listed, e.g. [AbCdEfGhIjK@657]. This includes the first and the last sentence and every bullet. A sentence drawing on two segments cites both. A sentence without an ID is deleted from your answer.\n- Do not write introductions, summaries, \"Thus ...\" conclusions or your own inferences: say only what a segment says, and cite it. Never put IDs in a separate list.\n- Sentences that only say the segments do not cover something need no ID.\n- Cite only IDs from the list. Never invent an ID, a link or a timestamp.\n- The text is speech-to-text; paraphrase and attribute it to the speaker or video, quote briefly.\n- If the segments do not cover part of the question, say so plainly instead of filling the gap from memory.\n- Chapter and time-pointer segments only show where a topic is discussed; do not attribute statements to them.\nBe concise: a short paragraph or a few bullets.",
+          "role": "system"
+        },
+        {
+          "content": "Question: How do A and B differ on scaling versus data?\n\nSegments:\n[AAAAAAAAAAA@60] Video A (1:00, chapter): Chapter 'Part 1' covers this term.\n[BBBBBBBBBBB@90] Video B (1:30, chapter): Chapter 'Part 1' covers this term.\n[AAAAAAAAAAA@120] Video A (2:00, passage): scaling laws predict loss\n[BBBBBBBBBBB@300] Video B (5:00, passage): data quality matters most",
+          "role": "user"
+        }
+      ]
+    ]
+  ],
+  "result": {
+    "agent_turns": [
+      {
+        "cap": 600,
+        "completion_tokens": 10,
+        "finish": false,
+        "finish_reason": null,
+        "text_chars": 0,
+        "tool_calls": [
+          "find_videos"
+        ]
+      },
+      {
+        "cap": 600,
+        "completion_tokens": 10,
+        "finish": false,
+        "finish_reason": null,
+        "text_chars": 0,
+        "tool_calls": [
+          "search_video",
+          "search_video"
+        ]
+      },
+      {
+        "cap": 600,
+        "completion_tokens": 10,
+        "finish": true,
+        "finish_reason": null,
+        "text_chars": 0,
+        "tool_calls": [
+          "finish"
+        ]
+      }
+    ],
+    "answer": "A says scaling laws predict loss [AAAAAAAAAAA@120]. B says data quality matters [BBBBBBBBBBB@300].",
+    "citation_check": {
+      "dropped": [],
+      "first_failed": false,
+      "retried": false
+    },
+    "cited_ids": [
+      "AAAAAAAAAAA@120",
+      "BBBBBBBBBBB@300"
+    ],
+    "notes": [],
+    "retrieved_ids": [
+      "AAAAAAAAAAA@60",
+      "BBBBBBBBBBB@90",
+      "AAAAAAAAAAA@120",
+      "BBBBBBBBBBB@300"
+    ],
+    "route": "multi_step",
+    "route_reason": "compare",
+    "steps": 3
+  },
+  "tool_calls": [
+    [
+      "find_videos",
+      {
+        "term": "scaling"
+      }
+    ],
+    [
+      "search_video",
+      {
+        "question": "q",
+        "video": "AAAAAAAAAAA"
+      }
+    ],
+    [
+      "search_video",
+      {
+        "question": "q",
+        "video": "BBBBBBBBBBB"
+      }
+    ]
+  ],
+  "tools_offered": [
+    [],
+    [
+      "find_videos",
+      "search_video",
+      "locate_quote",
+      "finish"
+    ],
+    [
+      "find_videos",
+      "search_video",
+      "locate_quote",
+      "finish"
+    ],
+    [
+      "find_videos",
+      "search_video",
+      "locate_quote",
+      "finish"
+    ],
+    []
+  ]
+}
