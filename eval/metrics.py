@@ -12,10 +12,12 @@ is the right one, so it is never reported as "task success".
 from __future__ import annotations
 
 import math
+import random
 from collections import defaultdict
 from typing import Any, Iterable
 
 from atlandex_agent.citations import answer_sentences as split_answer
+from atlandex_agent.graph import NO_COVERAGE
 
 
 def parse_segment_id(sid: str) -> tuple[str, int | None]:
@@ -142,7 +144,30 @@ def summarize(records: list[dict[str, Any]], tolerance_sec: int = 60) -> dict[st
         "uncited_flagged": sum(len(r.get("citation_check", {}).get("uncited_first", [])) for r in ok),
         "uncited_dropped": sum(len(r.get("citation_check", {}).get("dropped_uncited", [])) for r in ok),
         "final_sentences": sum(len(split_answer(r.get("answer", ""))) for r in ok),
+        # --- cost and the guards against a gain that is not one (see PLAN.md 6.5) ---------------------------
+        # agent calls only (the judge is not included); a record from before these fields existed counts as 0 calls
+        "llm_calls_mean": _mean([float(r["usage"].get("llm_calls", 0)) for r in ok]),
+        "llm_calls_max": max((r["usage"].get("llm_calls", 0) for r in ok), default=None),
+        # HTTP attempts incl. retries after 429/5xx; a cached reply made no request
+        "http_attempts_total": sum(c.get("attempts", 1) for r in ok for c in r.get("llm_calls", []) if not c.get("cached")),
+        "final_sentences_mean": _mean([float(len(split_answer(r.get("answer", "")))) for r in ok]),
+        "no_coverage_answers": sum(1 for r in ok if r.get("answer", "").strip() == NO_COVERAGE),
+        "verify_dropped": sum(len((r.get("verify") or {}).get("dropped_unverified", [])) for r in ok),
+        "verify_failed": sum(1 for r in ok if (r.get("verify") or {}).get("failed")),
+        "verify_skipped_budget": sum(1 for r in ok if (r.get("verify") or {}).get("skipped_budget")),
+        "supervisor_fallbacks": sum(1 for r in ok for t in r.get("supervisor_turns", []) if t.get("fallback")),
     }
+
+
+def record_arch(r: dict[str, Any]) -> str:
+    """The architecture a record was produced by; records from before the multi-agent variant are single."""
+    return r.get("arch") or "single"
+
+
+def aggregate_by_arch(records: list[dict[str, Any]], tolerance_sec: int = 60) -> dict[str, dict[str, Any]]:
+    """aggregate() separately for each architecture present, in the order single, multi."""
+    archs = sorted({record_arch(r) for r in records}, key=lambda a: (a != "single", a))
+    return {a: aggregate([r for r in records if record_arch(r) == a], tolerance_sec) for a in archs}
 
 
 def aggregate(records: list[dict[str, Any]], tolerance_sec: int = 60) -> dict[str, Any]:
@@ -162,3 +187,50 @@ def aggregate(records: list[dict[str, Any]], tolerance_sec: int = 60) -> dict[st
         "headline": {f"{m}|{s}": summarize(rs, tolerance_sec) for (m, s), rs in sorted(groups.items())},
         "unverified_not_in_headline": {m: summarize(rs, tolerance_sec) for m, rs in sorted(unverified.items())},
     }
+
+
+# --- paired comparison of two arms ------------------------------------------------------------------------------
+
+def discordant(pairs: Iterable[tuple[bool, bool]]) -> tuple[int, int]:
+    """(a_only, b_only): pairs where only arm A hit, and pairs where only arm B hit. Concordant pairs say nothing."""
+    p = list(pairs)
+    return sum(a and not b for a, b in p), sum(b and not a for a, b in p)
+
+
+def sign_test_p(a_only: int, b_only: int) -> float:
+    """Exact two-sided sign test on the discordant pairs: 2 * P(X <= min), X ~ Binomial(a_only + b_only, 1/2)."""
+    n = a_only + b_only
+    if n == 0:
+        return 1.0
+    k = min(a_only, b_only)
+    return min(1.0, 2 * sum(math.comb(n, i) for i in range(k + 1)) / 2 ** n)
+
+
+def bootstrap_diff(per_query_a: list[tuple[int, int]], per_query_b: list[tuple[int, int]], n: int = 2000,
+                   seed: int = 0) -> dict[str, Any]:
+    """Bootstrap 95% interval for the difference in hallucination rate, B minus A, resampling QUERIES.
+
+    `per_query_x[i]` is (unsupported sentences, judged sentences) of query i in arm x; the two lists are paired
+    by position. A rate is the pooled share over the resampled queries, as in the headline. Queries are the unit
+    because the sentences of one answer are not independent. Resamples where an arm has no judged sentence are
+    skipped. Deterministic for a given seed.
+    """
+    assert len(per_query_a) == len(per_query_b)
+    m = len(per_query_a)
+
+    def rate(rows: list[tuple[int, int]], idx: list[int]) -> float | None:
+        judged = sum(rows[i][1] for i in idx)
+        return sum(rows[i][0] for i in idx) / judged if judged else None
+
+    point_a, point_b = rate(per_query_a, list(range(m))), rate(per_query_b, list(range(m)))
+    rng = random.Random(seed)
+    diffs = []
+    for _ in range(n if m else 0):
+        idx = [rng.randrange(m) for _ in range(m)]
+        ra, rb = rate(per_query_a, idx), rate(per_query_b, idx)
+        if ra is not None and rb is not None:
+            diffs.append(rb - ra)
+    diffs.sort()
+    return {"queries": m, "rate_a": point_a, "rate_b": point_b,
+            "diff": (point_b - point_a) if point_a is not None and point_b is not None else None,
+            "lo": percentile(diffs, 2.5), "hi": percentile(diffs, 97.5), "resamples": len(diffs)}

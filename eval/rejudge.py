@@ -27,7 +27,7 @@ from atlandex_agent.llm import LLMError, LLMUnavailable, OpenRouterClient
 
 from .agreement import LABELS_DIR
 from .judge import judge_answer
-from .metrics import aggregate
+from .metrics import aggregate, record_arch
 
 SIDECAR = "judge_rejudged.jsonl"
 REPORT = "rejudge_report.json"
@@ -44,8 +44,9 @@ def merge_rejudged(records: list[dict[str, Any]], sidecar: list[dict[str, Any]])
     A sidecar row without a result (the judge was unavailable) leaves the old judgement in place,
     so a failed re-judge can never turn an unjudged sentence into a judged one.
     """
-    new = {(row["id"], row["model"]): row["judge"] for row in sidecar if row.get("judge")}
-    return [{**r, "judge": new[(r["id"], r["model"])]} if (r["id"], r["model"]) in new else r for r in records]
+    new = {(row["id"], row["model"], row.get("arch") or "single"): row["judge"] for row in sidecar if row.get("judge")}
+    key = lambda r: (r["id"], r["model"], record_arch(r))  # noqa: E731  (a sidecar row without arch is a single one)
+    return [{**r, "judge": new[key(r)]} if key(r) in new else r for r in records]
 
 
 def coverage_report(records: list[dict[str, Any]], tolerance_sec: int = 60) -> dict[str, Any]:
@@ -90,24 +91,27 @@ async def amain(args: argparse.Namespace) -> None:
     only = None
     if args.labelled_only:  # just the answers behind the rows in eval/labels (saves free-tier requests)
         with (LABELS_DIR / "judge_verdicts.csv").open(encoding="utf-8", newline="") as vf:
-            only = {(row["record_id"], row["model"]) for row in csv.DictReader(vf)}
+            only = {(row["record_id"], row["model"], row.get("arch") or "single") for row in csv.DictReader(vf)}
     sidecar: list[dict[str, Any]] = []
     with out.open("w", encoding="utf-8") as f:
         for r in records:
             if r.get("error") or r.get("clarification"):
                 continue
-            if only is not None and (r["id"], r["model"]) not in only:
+            if args.arch and record_arch(r) != args.arch:
+                continue
+            if only is not None and (r["id"], r["model"], record_arch(r)) not in only:
                 continue
             if args.only_unjudged and not has_unjudged(r):
                 continue
             try:
                 j = await judge_answer(llm, r["answer"], r["segments"])
             except (LLMUnavailable, LLMError) as e:
-                row = {"id": r["id"], "model": r["model"], "judge": None, "error": f"{type(e).__name__}: {e}"}
+                row = {"id": r["id"], "model": r["model"], "arch": record_arch(r), "judge": None,
+                       "error": f"{type(e).__name__}: {e}"}
                 f.write(json.dumps(row) + "\n")
                 sidecar.append(row)
                 continue
-            row = {"id": r["id"], "model": r["model"], "judge": j}
+            row = {"id": r["id"], "model": r["model"], "arch": record_arch(r), "judge": j}
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
             sidecar.append(row)
             done += 1
@@ -116,8 +120,9 @@ async def amain(args: argparse.Namespace) -> None:
     print(f"wrote {out} ({done} answers); paid spend ${client.paid_spend_usd:.4f}")
     if args.only_unjudged:
         tol = json.loads((results / "summary.json").read_text(encoding="utf-8")).get("gold_tolerance_sec", 60)
-        before = coverage_report(records, tol)
-        after = coverage_report(merge_rejudged(records, sidecar), tol)
+        scope = [r for r in records if not args.arch or record_arch(r) == args.arch]
+        before = coverage_report(scope, tol)
+        after = coverage_report(merge_rejudged(scope, sidecar), tol)
         (results / REPORT).write_text(json.dumps({"judge_model": judge_model, "before": before, "after": after},
                                                  indent=2), encoding="utf-8")
         print(report_table(before, after))
@@ -130,11 +135,18 @@ def main() -> None:
     p.add_argument("--name", default=None)
     p.add_argument("--labelled-only", action="store_true",
                    help="only re-judge the answers that contain rows of eval/labels/judge_verdicts.csv")
+    p.add_argument("--arch", choices=["single", "multi"], default=None,
+                   help="only re-judge the records of this architecture (default: all of them)")
     p.add_argument("--only-unjudged", action="store_true",
                    help="re-judge only answers that have unjudged sentences; writes a sidecar and a report")
     args = p.parse_args()
     if not args.only_unjudged and not (args.judge_model and args.name):
         p.error("--judge-model and --name are required unless --only-unjudged is given")
+    if args.only_unjudged and not args.arch:
+        archs = {record_arch(json.loads(l)) for l in
+                 (Path(args.results) / "records.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()}
+        if len(archs) > 1:
+            p.error("this folder holds several architectures: add --arch single or --arch multi to --only-unjudged")
     logging.basicConfig(level=logging.WARNING, format="%(message)s")
     asyncio.run(amain(args))
 
