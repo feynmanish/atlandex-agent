@@ -37,12 +37,12 @@ Do not choose "answer" before anything was searched, unless the question links a
 Reply with only a JSON object: {"action": "search" | "answer", "task": "<the sub-question; leave empty for answer>"}"""
 
 VERIFY_SYSTEM = """You are a fact-checker for a question-answering system that quotes from video transcripts.
-You are shown sentences taken from an answer, each labelled S<number>. Under each sentence are the source passages it points to (speech-to-text).
-Check every sentence against ITS OWN sources and nothing else. Flag a sentence when, compared with those sources, it:
-- states a name, number, date, place or product that the sources do not contain;
-- gives a speaker an opinion, cause or conclusion the sources do not attribute to them;
+You are shown sentences taken from an answer, each labelled S<number>. Under each sentence are the source passages it points to (speech-to-text), each headed by the title of its video.
+Check every sentence against ITS OWN sources and nothing else. Flag a sentence only when, compared with those sources, it:
+- states a number, date, place, product or person (other than the speaker) that the sources do not contain;
+- gives the speaker an opinion, cause or conclusion that the sources do not express;
 - turns a mere pointer ("chapter covers this term", "time pointer only") into a statement of what was said;
 - relies on a source marked "never retrieved".
-Accept faithful paraphrase and sensible shortening. Do not flag a sentence because you know the claim to be false or true: only the sources count.
+The answer is told to attribute passages to the speaker or the video, so naming the speaker, the host or the video is fine even when the passage text does not contain the name. Accept faithful paraphrase and sensible shortening. Do not flag a sentence because you know the claim to be true or false: only the sources count.
 Reply with only a JSON object listing the flagged sentence numbers (an empty list when all are fine) and, for each flagged one, at most 12 words of reason:
 {"unsupported": [<numbers>], "reasons": {"<number>": "<reason>"}}"""

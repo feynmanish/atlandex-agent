@@ -108,14 +108,14 @@ def _headline_row(key: str, s: dict) -> str:
 
 def _cost_rows(headline: dict[str, dict]) -> list[str]:
     lines = ["| model | source | LLM calls mean / max | HTTP attempts | final sentences / answer | no-coverage answers | "
-             "verify dropped / failed / skipped | supervisor fallbacks |", "|" + "---|" * 8]
+             "verify dropped / failed / skipped | supervisor fallbacks | budget-forced runs |", "|" + "---|" * 9]
     for key, s in headline.items():
         m, src = key.split("|")
         top = s["llm_calls_max"] if s["llm_calls_max"] is not None else "n/a"
         lines.append(f"| {m} | {src} | {fmt(s['llm_calls_mean'], nd=1)} / {top} | "
                      f"{s['http_attempts_total']} | {fmt(s['final_sentences_mean'], nd=1)} | {s['no_coverage_answers']} | "
                      f"{s['verify_dropped']} / {s['verify_failed']} / {s['verify_skipped_budget']} | "
-                     f"{s['supervisor_fallbacks']} |")
+                     f"{s['supervisor_fallbacks']} | {s['budget_forced_runs']} |")
     return lines
 
 

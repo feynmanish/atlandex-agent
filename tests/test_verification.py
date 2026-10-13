@@ -146,3 +146,14 @@ def test_an_index_the_verifier_was_never_shown_is_ignored():
 def test_a_verifier_that_flags_everything_in_the_first_round_only_costs_one_rewrite():
     llm, res = run([TWO, TWO, TWO], [flag(0, 1)])
     assert llm.roles().count("answer") == 2 and res["answer"] == NO_COVERAGE
+
+
+def test_the_verifier_is_shown_each_video_title_and_told_that_naming_the_speaker_is_fine():
+    """Smoke finding: the verifier saw only transcript text, so it flagged "<Speaker> says ..." because the speaker's
+    name is in the video's metadata and not in the passage. It now sees the title and is told this is not a defect."""
+    segs = {SEG_A: {"text": "a good ballpark is a 33% split", "title": "Reiner Pope on scaling"}}
+    text = build_verify_input([f"Reiner Pope says a 33% split is a good ballpark [{SEG_A}]."], segs)
+    assert f'source [{SEG_A}] ("Reiner Pope on scaling"): a good ballpark is a 33% split' in text
+    assert "naming the speaker" in prompts.VERIFY_SYSTEM and "headed by the title" in prompts.VERIFY_SYSTEM
+    # a segment without a title (older records, chapter pointers) is shown as before
+    assert f"source [{SEG_A}]: a good ballpark" in build_verify_input([f"x [{SEG_A}]."], {SEG_A: {"text": "a good ballpark"}})

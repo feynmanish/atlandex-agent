@@ -85,6 +85,7 @@ def row_stats(r: dict[str, Any]) -> dict[str, Any]:
         "no_coverage": r.get("answer", "").strip() == NO_COVERAGE,
         "verify_dropped": len((r.get("verify") or {}).get("dropped_unverified", [])),
         "supervisor_fallbacks": sum(1 for t in r.get("supervisor_turns", []) if t.get("fallback")),
+        "budget_forced": any("call budget: forced answer" in n for n in r.get("notes", [])),
         "route": r.get("route"),
     }
 
@@ -140,6 +141,7 @@ def compare(baseline: list[dict[str, Any]], fixed: list[dict[str, Any]]) -> dict
                 "no_coverage_answers": sum(s["no_coverage"] for s in st),
                 "verify_dropped": sum(s["verify_dropped"] for s in st),
                 "supervisor_fallbacks": sum(s["supervisor_fallbacks"] for s in st),
+                "budget_forced_runs": sum(s["budget_forced"] for s in st),
             }
         by_key = {(r["id"], r["model_alias"]): r for r in rows}
         hit_pairs = [(by_key[k]["before"]["segment_hit"], by_key[k]["after"]["segment_hit"]) for k in sel
@@ -188,7 +190,7 @@ def to_markdown(c: dict[str, Any], baseline_name: str, fixed_name: str) -> str:
               "",
               "| agent model | | segment hit | video hit | discordant before-only / after-only (p) | "
               "hallucination diff [95% CI] | final sent. / answer | no-coverage | verify dropped | supervisor fallbacks | "
-              "route disagreements |", "|" + "---|" * 11]
+              "budget-forced runs | route disagreements |", "|" + "---|" * 12]
     for alias, s in c["summary"].items():
         p, d = s["segment_hit_pairs"], s["hallucination_diff"]
         pts = lambda v: "n/a" if v is None else f"{v * 100:+.0f}"  # noqa: E731
@@ -202,7 +204,7 @@ def to_markdown(c: dict[str, Any], baseline_name: str, fixed_name: str) -> str:
                      f"{p['before_only']} / {p['after_only']} (p={p['sign_test_p']:.3f})" if first else "",
                      diff if first else "",
                      _f(x["final_sentences_mean"]), str(x["no_coverage_answers"]), str(x["verify_dropped"]),
-                     str(x["supervisor_fallbacks"]),
+                     str(x["supervisor_fallbacks"]), str(x["budget_forced_runs"]),
                      (f"{len(routes)}" + (f" ({', '.join(routes)})" if routes else "")) if first else ""]
             lines.append("| " + " | ".join(cells) + " |")
     lines += ["", "## Per query", "",

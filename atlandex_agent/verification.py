@@ -32,7 +32,8 @@ def build_verify_input(sentences: list[str], segments: dict[str, dict[str, Any]]
         sources = []
         for sid in extract_citations(sentences[i]):
             seg = segments.get(sid)
-            sources.append(f"  source [{sid}]: {seg['text']}" if seg else f"  source [{sid}]: (never retrieved)")
+            title = f' ("{seg["title"]}")' if seg and seg.get("title") else ""
+            sources.append(f"  source [{sid}]{title}: {seg['text']}" if seg else f"  source [{sid}]: (never retrieved)")
         blocks.append(f"S{i}: {claim}\n" + "\n".join(sources))
     return "\n\n".join(blocks)
 

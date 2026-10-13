@@ -55,6 +55,39 @@ flowchart TD
 
 Passages carry no ID of their own, so the agent derives one: `video_id@start_sec` (`video_id@na<rank>` if the start time is unknown). The CLI maps IDs back to the tools' ready-made `citation` links.
 
+## Multi-agent variant
+
+`--arch multi` runs a second graph next to the one above (`--arch single`, the default and the reference). It adds a **supervisor** that hands the search agent one task at a time, and a **verification agent** that checks each answer sentence against the segments it cites. Everything else is shared code: the router, the seed, the agent loop (as the "search agent", with a `Task:` line in its user message and an unchanged system prompt), the tools, the answer step and the deterministic citation check. The single graph is pinned by golden transcripts (`tests/test_single_unchanged.py`), so adding the variant did not change it.
+
+```mermaid
+flowchart TD
+    Q([question]) --> R[router]
+    R -- unclear --> C[clarify] --> E1([end])
+    R -- simple / multi_step --> S[seed]
+    S -- linked video --> ST[tools]
+    S -- no link --> SUP
+    ST --> SUP[supervisor]
+    SUP -- "search(task)" --> SA[search agent]
+    SA -- tool calls --> T[tools]
+    T -- allowance left --> SA
+    SA -- finish --> SUP
+    T -- task allowance used --> SUP
+    T -- 6 steps used --> AN
+    SUP -- "answer" / last turn / call budget --> AN[answer]
+    AN --> CC{citation_check}
+    CC -- bad IDs / uncited, first draft --> AN
+    CC -- ok or dropped --> V{verify}
+    V -- unsupported sentences, first draft --> AN
+    V -- unsupported sentences, second draft --> D[drop them] --> E2([end])
+    V -- all supported / verifier failed --> E2
+```
+
+- **Bounds.** At most 3 supervisor turns (the last can only answer), the same 6 tool steps in total (3 per task), at most 2 answer drafts (the verifier's rewrite uses the same slot as the citation check's), at most 2 verification rounds, and at most **13 LLM calls per run for both architectures**. 13 is the most a single run can make, so the cap never changes `single`; in `multi`, once the calls left would not cover the answer, one rewrite and one verification, the graph goes to the answer (`call budget: forced answer` in the notes).
+- **The verifier fails open.** An empty or unparseable verifier reply drops nothing. A sentence is dropped only when the verifier flags it twice (or once, if the citation check had already used the rewrite).
+- **Same model, same caps.** Every role runs on the model under test. Supervisor and search turns use the agent-turn cap (large 1500, small 600), the verifier the 1500-token default (`VERIFY_MAX_TOKENS` to change it).
+- Settings (all optional, see `.env.example`): `AGENT_ARCH`, `SEARCH_STEPS_PER_TASK`, `MAX_SUPERVISOR_TURNS`, `VERIFY_MAX_TOKENS`, `MAX_LLM_CALLS_PER_RUN`.
+- The eval compares the two on the same queries with `python -m eval.run --arch both` and `python -m eval.compare --baseline R:single --fixed R:multi`; the design, the guards against a gain that only comes from deleting sentences, and the pre-registered rules are in [PLAN.md](PLAN.md) and [DECISIONS.md](DECISIONS.md#multi-agent-comparison-2026-10-13).
+
 ## Setup
 
 Requires Python 3.10+ and a working [`atlandex-mcp`](https://github.com/feynmanish/atlandex-mcp) install.
@@ -96,6 +129,8 @@ python -m eval.run --resume eval/results/<run> --model both --include-review   #
 python -m eval.summarize eval/results/<run>                    # rebuild summary.json/md from records.jsonl
 python -m eval.rejudge --results eval/results/<run> --only-unjudged   # re-judge only answers with unjudged sentences (sidecar + report)
 python -m eval.compare --baseline eval/results/<old> --fixed eval/results/<new>   # per-query before/after (comparison.md)
+python -m eval.run --model large --arch both --no-cache          # single and multi on the same queries, alternating order, one judge
+python -m eval.compare --baseline eval/results/<run>:single --fixed eval/results/<run>:multi --name arch_comparison
 python -m eval.trajectory --run base=<dir> --run v1=<dir> --run v2=<dir> --caps base=1500:1500 --out <dir>   # follow queries through 3 runs, with cap hits and drafts
 python -m eval.sample_for_labels --n 30 --stratify             # eval/labels/to_label.csv (no verdicts) + judge_verdicts.csv
 python -m eval.agreement                                       # main judge vs the reference labels
