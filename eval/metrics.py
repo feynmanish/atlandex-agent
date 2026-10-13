@@ -155,6 +155,8 @@ def summarize(records: list[dict[str, Any]], tolerance_sec: int = 60) -> dict[st
         "verify_dropped": sum(len((r.get("verify") or {}).get("dropped_unverified", [])) for r in ok),
         "verify_failed": sum(1 for r in ok if (r.get("verify") or {}).get("failed")),
         "verify_skipped_budget": sum(1 for r in ok if (r.get("verify") or {}).get("skipped_budget")),
+        # runs where the per-run call cap made the graph go to the answer before the agent had finished searching
+        "budget_forced_runs": sum(1 for r in ok if any("call budget: forced answer" in n for n in r.get("notes", []))),
         "supervisor_fallbacks": sum(1 for r in ok for t in r.get("supervisor_turns", []) if t.get("fallback")),
     }
 

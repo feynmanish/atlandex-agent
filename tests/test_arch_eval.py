@@ -100,6 +100,9 @@ def test_summarize_reports_calls_attempts_and_the_deletion_guards():
     assert s["http_attempts_total"] == 4  # the cached call made no request: (2 + 0) per record
     assert s["final_sentences_mean"] == 1.5 and s["no_coverage_answers"] == 1
     assert (s["verify_dropped"], s["verify_failed"], s["verify_skipped_budget"], s["supervisor_fallbacks"]) == (2, 1, 1, 1)
+    assert s["budget_forced_runs"] == 0
+    forced = rec("q3", arch="multi", notes=["call budget: forced answer"])
+    assert summarize([multi, forced])["budget_forced_runs"] == 1
 
 
 def test_sign_test_and_discordant_pairs():
