@@ -1,4 +1,9 @@
-"""The LangGraph agent: router -> (clarify | agent loop) -> answer -> citation_check."""
+"""The LangGraph agent: router -> (clarify | agent loop) -> answer -> citation_check.
+
+`make_nodes` builds the node functions once; `build_graph` wires them as the single agent, and
+`multi_agent.build_multi_agent_graph` wires the same nodes (plus a supervisor and a verifier) as the multi-agent
+variant. `run_agent(..., arch=...)` picks one.
+"""
 from __future__ import annotations
 
 import json
@@ -11,7 +16,7 @@ from langgraph.graph import END, START, StateGraph
 from . import prompts
 from .citations import drop_uncited, drop_unsupported, uncited_claims, unsupported_ids
 from .config import Settings
-from .llm import LLM, usage_summary, records_to_dicts
+from .llm import LLM, CallBudget, usage_summary, records_to_dicts
 from .mcp_tools import ToolBox
 from .segments import extract_citations, normalize_citations, parse_tool_output
 from .tracing import NullTracer, TraceInfo, tracer_for
@@ -29,6 +34,10 @@ FINISH_SPEC = {"type": "function", "function": {
                    "Takes no arguments.",
     "parameters": {"type": "object", "properties": {}}}}
 NO_COVERAGE = "No indexed video covered this question well enough to answer it."
+ARCHS = ("single", "multi")
+# Calls the multi-agent graph keeps back for the end of a run before it starts another search or supervisor call:
+# the answer (2: first try plus the empty-answer retry), one rewrite (2), one verification (1).
+CALL_RESERVE = 5
 
 
 class EmptyAnswerError(RuntimeError):
@@ -54,6 +63,14 @@ class State(TypedDict, total=False):
     feedback: str
     citation_check: dict[str, Any]
     notes: list[str]
+    # multi-agent only; absent in single runs
+    arch: str
+    task: str  # the search task the supervisor delegated last
+    task_steps_start: int  # len(tool_log) when that task began
+    supervisor_turns: list[dict[str, Any]]
+    force_answer: bool  # the call budget is nearly used up: go to the answer step
+    verify: dict[str, Any]
+    verify_drop: list[int]  # indices (into answer_sentences) the verifier flagged and that must be dropped
 
 
 def parse_json_object(text: str) -> dict[str, Any] | None:
@@ -85,7 +102,9 @@ def bound_evidence(entries: list[dict[str, str]], budget: int) -> str:
     return "\n\n".join(reversed(out)) if out else "(none yet)"
 
 
-def build_graph(llm: LLM, tools: ToolBox, settings: Settings):
+def make_nodes(llm: LLM, tools: ToolBox, settings: Settings, budget: CallBudget | None = None) -> dict[str, Any]:
+    """The node functions shared by both architectures. `budget` is only consulted by multi-agent runs (a node
+    that has a `task` in its state); a single run never reads it, so its behaviour does not depend on it."""
     specs = tools.openai_specs()
 
     async def router(state: State) -> State:
@@ -109,10 +128,21 @@ def build_graph(llm: LLM, tools: ToolBox, settings: Settings):
 
     async def agent(state: State) -> State:
         steps = len(state.get("tool_log", []))
+        task = state.get("task")  # set only by the multi-agent supervisor
+        if task and budget is not None and budget.left() - CALL_RESERVE < 1:
+            return {"agent_done": True, "force_answer": True, "pending": [],
+                    "notes": state.get("notes", []) + ["call budget: forced answer"]}
         hint = "Route: simple; one search is probably enough." if state["route"] == "simple" else \
             "Route: multi_step; plan the searches you need."
+        task_line = f"Task: {task}\n" if task else ""
+        task_left = ""
+        if task:
+            used_here = steps - state.get("task_steps_start", 0)
+            task_left = (f" Steps left for this task: "
+                         f"{max(0, min(settings.search_steps_per_task - used_here, settings.max_tool_steps - steps))}.")
         user = (
-            f"Question: {state['question']}\n{hint}\nTool calls used: {steps}/{settings.max_tool_steps}.\n\n"
+            f"Question: {state['question']}\n{hint}\n{task_line}"
+            f"Tool calls used: {steps}/{settings.max_tool_steps}.{task_left}\n\n"
             f"Evidence so far:\n{bound_evidence(state.get('evidence', []), settings.evidence_char_budget)}\n\n"
             "Call a tool if you still need evidence; otherwise call the finish tool (or reply with exactly: READY)"
         )
@@ -155,8 +185,11 @@ def build_graph(llm: LLM, tools: ToolBox, settings: Settings):
         evidence = list(state.get("evidence", []))
         segments = dict(state.get("segments", {}))
         seen = {(t["name"], json.dumps(t["args"], sort_keys=True)) for t in log}
+        limit = settings.max_tool_steps
+        if state.get("task"):  # a multi-agent search task has its own, smaller allowance
+            limit = min(limit, state.get("task_steps_start", 0) + settings.search_steps_per_task)
         for call in state.get("pending", []):
-            if len(log) >= settings.max_tool_steps:
+            if len(log) >= limit:
                 break
             key = (call["name"], json.dumps(call["args"], sort_keys=True))
             header = f"Step {len(log) + 1}: {call['name']}({json.dumps(call['args'], ensure_ascii=False)})"
@@ -172,14 +205,6 @@ def build_graph(llm: LLM, tools: ToolBox, settings: Settings):
                         "error": body.startswith("Error") or "no searchable transcript" in body})
             evidence.append({"header": header, "body": body})
         return {"tool_log": log, "evidence": evidence, "segments": segments, "pending": []}
-
-    def after_agent(state: State) -> str:
-        if state.get("agent_done") or len(state.get("tool_log", [])) >= settings.max_tool_steps:
-            return "answer"
-        return "tools" if state.get("pending") else "agent"
-
-    def after_tools(state: State) -> str:
-        return "answer" if len(state.get("tool_log", [])) >= settings.max_tool_steps else "agent"
 
     async def answer(state: State) -> State:
         segments = state.get("segments", {})
@@ -238,17 +263,28 @@ def build_graph(llm: LLM, tools: ToolBox, settings: Settings):
             info["no_citations"] = True  # nothing left that cites a segment (only 'not covered' statements)
         return {"answer": cleaned or NO_COVERAGE, "citation_check": info, "feedback": ""}
 
+    return {"router": router, "clarify": clarify, "seed": seed, "agent": agent, "tools": run_tools,
+            "answer": answer, "citation_check": citation_check}
+
+
+def build_graph(llm: LLM, tools: ToolBox, settings: Settings, budget: CallBudget | None = None):
+    """The single agent: router -> seed -> (tools) -> agent <-> tools -> answer -> citation_check."""
+    nodes = make_nodes(llm, tools, settings, budget)
+
+    def after_agent(state: State) -> str:
+        if state.get("agent_done") or len(state.get("tool_log", [])) >= settings.max_tool_steps:
+            return "answer"
+        return "tools" if state.get("pending") else "agent"
+
+    def after_tools(state: State) -> str:
+        return "answer" if len(state.get("tool_log", [])) >= settings.max_tool_steps else "agent"
+
     def after_check(state: State) -> str:
         return "answer" if state.get("feedback") else END
 
     g = StateGraph(State)
-    g.add_node("router", router)
-    g.add_node("clarify", clarify)
-    g.add_node("seed", seed)
-    g.add_node("agent", agent)
-    g.add_node("tools", run_tools)
-    g.add_node("answer", answer)
-    g.add_node("citation_check", citation_check)
+    for name, fn in nodes.items():
+        g.add_node(name, fn)
     g.add_edge(START, "router")
     g.add_conditional_edges("router", lambda s: "clarify" if s["route"] == "unclear" else "seed",
                             {"clarify": "clarify", "seed": "seed"})
@@ -263,16 +299,28 @@ def build_graph(llm: LLM, tools: ToolBox, settings: Settings):
 
 
 async def run_agent(question: str, llm: LLM, tools: ToolBox, settings: Settings,
-                    trace: TraceInfo | None = None, tracer: NullTracer | None = None) -> dict[str, Any]:
+                    trace: TraceInfo | None = None, tracer: NullTracer | None = None,
+                    arch: str = "single") -> dict[str, Any]:
     """Run one question; returns a JSON-serialisable result with usage for this run only.
+
+    `arch` is "single" (the default, unchanged behaviour) or "multi" (supervisor + search agent + verifier).
+    Both architectures run under the same cap of `Settings.max_llm_calls_per_run` logical LLM calls.
 
     With Langfuse configured (see tracing.py) the run is also recorded as one trace; its id is
     returned as `trace_id`. Without keys `trace_id` is None and nothing else changes.
     """
+    if arch not in ARCHS:
+        raise ValueError(f"unknown architecture {arch!r}; use one of {', '.join(ARCHS)}")
     tracer = tracer or tracer_for(settings)
     with tracer.run(question, llm.model, trace) as run:
         llm, tools = run.llm(llm), run.tools(tools)
-        graph = build_graph(llm, tools, settings)
+        llm = CallBudget(llm, settings.max_llm_calls_per_run)
+        if arch == "multi":
+            from .multi_agent import build_multi_agent_graph  # imports this module, so not at the top
+
+            graph = build_multi_agent_graph(llm, tools, settings, llm)
+        else:
+            graph = build_graph(llm, tools, settings, llm)
         first_call = len(llm.calls)
         t0 = time.perf_counter()
         final = await graph.ainvoke({"question": question}, {"recursion_limit": 60, **run.config})
@@ -300,6 +348,11 @@ async def run_agent(question: str, llm: LLM, tools: ToolBox, settings: Settings,
             "usage": usage_summary(records),
             "llm_calls": records_to_dicts(records),
             "agent_turns": final.get("agent_turns", []),
+            "arch": arch,
+            "supervisor_turns": final.get("supervisor_turns", []),
+            "verify": final.get("verify", {}),
+            "llm_calls_cap": llm.cap,
+            "llm_calls_used": llm.used,
         }
         run.finish({k: result[k] for k in ("answer", "model", "route", "route_reason", "cited_ids", "retrieved_ids",
                                            "steps", "citation_check", "notes", "latency_sec", "usage")})
