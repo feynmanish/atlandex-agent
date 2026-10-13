@@ -26,18 +26,19 @@ def latest_results() -> Path:
     return runs[-1]
 
 
-def collect(results: Path) -> list[dict]:
+def collect(results: Path, arch: str | None = None) -> list[dict]:
     rows = []
     for line in (results / "records.jsonl").read_text(encoding="utf-8").splitlines():
         r = json.loads(line)
-        if r.get("needs_review") or not r.get("judge"):
+        if r.get("needs_review") or not r.get("judge") or (arch and (r.get("arch") or "single") != arch):
             continue
         for k, s in enumerate(r["judge"]["sentences"]):
             if s["verdict"] not in ("supported", "unsupported"):
                 continue
             seg_text = "\n".join(
                 f"[{c}] {r['segments'][c]['text']}" for c in s["cited_ids"] if c in r["segments"]) or "(no cited segment)"
-            rows.append({"record": r["id"], "model": r["model"], "question": r["question"], "k": k,
+            rows.append({"record": r["id"], "model": r["model"], "arch": r.get("arch") or "single",
+                         "question": r["question"], "k": k,
                          "sentence": s["text"], "segment_text": seg_text, "verdict": s["verdict"], "reason": s["reason"]})
     return rows
 
@@ -47,12 +48,14 @@ def main() -> None:
     p.add_argument("--n", type=int, default=30)
     p.add_argument("--results", default=None, help="results directory (default: the latest)")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--arch", choices=["single", "multi"], default=None,
+                   help="only draw sentences from the answers of this architecture (default: all of them)")
     p.add_argument("--stratify", action="store_true",
                    help="draw half the rows from sentences the judge marked unsupported, half from supported")
     args = p.parse_args()
 
     results = Path(args.results) if args.results else latest_results()
-    pool = collect(results)
+    pool = collect(results, args.arch)
     rng = random.Random(args.seed)
     if args.stratify:
         # Half from each judge class (the verdict is used only to balance the sample; it is
@@ -72,10 +75,10 @@ def main() -> None:
         w = csv.writer(f)
         w.writerow(["row_id", "question", "answer_sentence", "cited_segment_text", "reference_label"])
         v = csv.writer(g)
-        v.writerow(["row_id", "judge_verdict", "judge_reason", "results_run", "record_id", "model", "sentence_index"])
+        v.writerow(["row_id", "judge_verdict", "judge_reason", "results_run", "record_id", "model", "sentence_index", "arch"])
         for i, s in enumerate(sample):
             w.writerow([i, s["question"], s["sentence"], s["segment_text"], ""])
-            v.writerow([i, s["verdict"], s["reason"], results.name, s["record"], s["model"], s["k"]])
+            v.writerow([i, s["verdict"], s["reason"], results.name, s["record"], s["model"], s["k"], s["arch"]])
     print(f"Wrote {len(sample)} rows (pool of {len(pool)}) from {results.name}.")
     print("Fill reference_label with 'supported' or 'unsupported' in eval/labels/to_label.csv "
           "without opening judge_verdicts.csv, then run python -m eval.agreement.")

@@ -9,7 +9,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .metrics import aggregate
+from .metrics import aggregate, aggregate_by_arch
 from .run import summary_markdown
 
 
@@ -25,13 +25,18 @@ def main() -> None:
         r.setdefault("steps", 0)
         r.setdefault("latency_sec", 0.0)
     tol = summary["gold_tolerance_sec"]
-    agg = aggregate(records, tol)
+    by_arch = aggregate_by_arch(records, tol)
+    agg = next(iter(by_arch.values())) if by_arch else aggregate(records, tol)  # the first (single) at the top level
     summary.update(agg)
+    summary.pop("by_arch", None)
+    if len(by_arch) > 1:
+        summary["by_arch"] = by_arch
     summary["n_records"] = len(records)
     (d / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     args = argparse.Namespace(model=summary["command"].get("model", "both"), subset=summary["command"].get("subset"),
-                              gold_tolerance_sec=tol)
-    (d / "summary.md").write_text(summary_markdown(agg, d, args), encoding="utf-8")
+                              gold_tolerance_sec=tol, arch=summary["command"].get("arch", "single"))
+    (d / "summary.md").write_text(summary_markdown(agg, d, args, by_arch if len(by_arch) > 1 else None),
+                                  encoding="utf-8")
     print(f"rewrote summary for {len(records)} records")
 
 

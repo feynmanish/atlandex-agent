@@ -389,7 +389,8 @@ def test_sample_for_labels_hides_the_verdict_and_skips_unreviewed(tmp_path, monk
 def test_resume_merge_keeps_finished_records_when_only_a_subset_is_rerun():
     from eval.run import merge_records
     ds = [{'id': 'a'}, {'id': 'b'}]
-    kept = {('a', 'small'): {'id': 'a', 'model_alias': 'small', 'x': 1}, ('b', 'large'): {'id': 'b', 'model_alias': 'large'}}
+    kept = {('a', 'small', 'single'): {'id': 'a', 'model_alias': 'small', 'x': 1},
+            ('b', 'large', 'single'): {'id': 'b', 'model_alias': 'large'}}
     new = [{'id': 'b', 'model_alias': 'small', 'x': 2}, {'id': 'a', 'model_alias': 'small', 'x': 9}]
     out = merge_records(kept, new, ds)
     assert [(r['id'], r['model_alias']) for r in out] == [('a', 'small'), ('b', 'small'), ('b', 'large')]

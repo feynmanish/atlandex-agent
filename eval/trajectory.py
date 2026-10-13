@@ -1,5 +1,7 @@
 """python -m eval.trajectory --run baseline=<dir> --run v1=<dir> --run v2=<dir> --caps baseline=1500:1500 --caps v1=600:600 --out <dir>
 
+A run is DIR or DIR:single / DIR:multi (one architecture of a folder that holds both), as in eval.compare.
+
 Follows the same queries through several runs (baseline -> fixed v1 -> fixed v2): steps, latency, tokens,
 hallucination rate, hit rates, and what the agent turns did. Only query-runs completed in EVERY run are used,
 per agent model. --caps label=LARGE:SMALL gives the agent-turn token caps in force for runs whose records do
@@ -16,7 +18,7 @@ from pathlib import Path
 from statistics import mean, median
 from typing import Any
 
-from .compare import completed, load, row_stats, verdicts
+from .compare import completed, load_selected, row_stats, verdicts
 from .metrics import hallucination_rate, percentile, segment_hit, video_hit
 
 DRAFT_CHARS = 200  # visible text above this, with no tool call, is a draft answer instead of `finish`/READY
@@ -124,7 +126,7 @@ def to_markdown(t: dict[str, Any], names: dict[str, str]) -> str:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--run", action="append", required=True, metavar="LABEL=DIR")
+    p.add_argument("--run", action="append", required=True, metavar="LABEL=DIR[:arch]")
     p.add_argument("--caps", action="append", default=[], metavar="LABEL=LARGE:SMALL",
                    help="agent-turn token caps in force for that run, for records that do not carry their own")
     p.add_argument("--out", required=True)
@@ -135,10 +137,9 @@ def main() -> None:
     names: dict[str, str] = {}
     for i, spec in enumerate(a.run):
         label, path = spec.split("=", 1)
-        runs[label] = load(Path(path), use_sidecar=(i == 0))
+        runs[label], names[label] = load_selected(path, use_sidecar=(i == 0))
         large, small = (cap_args.get(label) or "1500:600").split(":")
         caps[label] = {"large": int(large), "small": int(small)}
-        names[label] = Path(path).name
     t = trajectory(runs, caps)
     out = Path(a.out)
     (out / "trajectory.json").write_text(json.dumps(t, indent=2), encoding="utf-8")

@@ -173,6 +173,22 @@ class OpenRouterClient:
                 f"${self.paid_spend_usd:.5f} of BUDGET_USD={self.s.budget_usd}."
             )
 
+    async def key_status(self) -> dict[str, int]:
+        """The key's free-model request allowance today, from GET /key: {"daily_limit", "used_today", "remaining"}.
+
+        Used by the eval's free-request guard. It is not a chat request, so it is not throttled or cached, and the
+        key only goes into the Authorization header.
+        """
+        r = await self._http.get(f"{self.s.base_url}/key",
+                                 headers={"Authorization": f"Bearer {self.s.openrouter_api_key}"})
+        r.raise_for_status()
+        free = ((_safe_json(r).get("data") or {}).get("free_model_daily_requests")) or {}
+        try:
+            return {"daily_limit": int(free["limit"]), "used_today": int(free["used"]),
+                    "remaining": int(free["remaining"])}
+        except (KeyError, TypeError, ValueError):
+            raise LLMError("GET /key did not report free_model_daily_requests") from None
+
     # -- cache ----------------------------------------------------------
     def _cache_path(self, key: str):
         return self.s.cache_dir / f"{key}.json"
