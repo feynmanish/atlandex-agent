@@ -84,3 +84,26 @@ def drop_uncited(answer: str) -> tuple[str, list[str]]:
         if kept:
             kept_lines.append(" ".join(kept))
     return "\n".join(kept_lines).strip(), dropped
+
+
+def drop_sentences(answer: str, indices: Iterable[int]) -> str:
+    """Remove the sentences at `indices` (positions in `answer_sentences(answer)`); line breaks are kept.
+
+    A line none of whose sentences are removed stays exactly as it was; the others are rejoined from their
+    remaining sentences, like `drop_uncited`. An answer with nothing left returns "".
+    """
+    drop = set(indices)
+    kept_lines: list[str] = []
+    k = 0
+    for line in answer.splitlines():
+        sentences = split_sentences(line)
+        flagged = [k + j in drop for j in range(len(sentences))]
+        k += len(sentences)
+        if not any(flagged):
+            if line.strip():
+                kept_lines.append(line)
+            continue
+        kept = [s for s, f in zip(sentences, flagged) if not f]
+        if kept:
+            kept_lines.append(" ".join(kept))
+    return "\n".join(kept_lines).strip()

@@ -28,3 +28,21 @@ ANSWER_SYSTEM = """Answer the question using ONLY the segments listed below. Rul
 - If the segments do not cover part of the question, say so plainly instead of filling the gap from memory.
 - Chapter and time-pointer segments only show where a topic is discussed; do not attribute statements to them.
 Be concise: a short paragraph or a few bullets."""
+
+SUPERVISOR_SYSTEM = """You lead a small research team that answers questions from an index of long-form videos (talks, podcasts, webinars). You never search yourself: a search agent does that for you, one task at a time.
+Each turn you see the question, the tasks already given and the evidence collected so far. Pick exactly one action:
+- "search": give the search agent ONE focused task, written as a short sub-question, for example "what does <speaker> say about <topic>" or "which videos discuss <term>". Give separate tasks for separate videos, speakers or sub-questions, and never repeat a task. The search agent can make only a few tool calls per task.
+- "answer": the evidence is enough to write the answer, or nothing more can be found. The answer itself is written in a later step, not by you.
+Do not choose "answer" before anything was searched, unless the question links a video whose passages are already in the evidence. When the turn counter says it is the last turn, choose "answer".
+Reply with only a JSON object: {"action": "search" | "answer", "task": "<the sub-question; leave empty for answer>"}"""
+
+VERIFY_SYSTEM = """You are a fact-checker for a question-answering system that quotes from video transcripts.
+You are shown sentences taken from an answer, each labelled S<number>. Under each sentence are the source passages it points to (speech-to-text).
+Check every sentence against ITS OWN sources and nothing else. Flag a sentence when, compared with those sources, it:
+- states a name, number, date, place or product that the sources do not contain;
+- gives a speaker an opinion, cause or conclusion the sources do not attribute to them;
+- turns a mere pointer ("chapter covers this term", "time pointer only") into a statement of what was said;
+- relies on a source marked "never retrieved".
+Accept faithful paraphrase and sensible shortening. Do not flag a sentence because you know the claim to be false or true: only the sources count.
+Reply with only a JSON object listing the flagged sentence numbers (an empty list when all are fine) and, for each flagged one, at most 12 words of reason:
+{"unsupported": [<numbers>], "reasons": {"<number>": "<reason>"}}"""

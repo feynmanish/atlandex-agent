@@ -28,6 +28,15 @@ def format_result(res: dict) -> str:
                  f"tokens: {u['prompt_tokens']} in / {u['completion_tokens']} out | cost: ${u['cost_usd']:.4f}")
     if cc.get("retried") or cc.get("dropped"):
         lines.append(f"citation check: retried={cc.get('retried')} dropped={len(cc.get('dropped', []))} claim(s)")
+    if res.get("arch") == "multi":
+        for t in res["supervisor_turns"]:
+            lines.append(f"supervisor: {t['action']}" + (f" -> {t['task']}" if t["task"] else "")
+                         + (f" (forced: {t['forced']})" if t.get("forced") else ""))
+        v = res["verify"]
+        if v:
+            lines.append(f"verify: {v['rounds']} round(s), flagged {len(v['flagged_first'])}/{len(v['flagged_second'])}, "
+                         f"dropped {len(v['dropped_unverified'])}" + (", verifier failed" if v["failed"] else ""))
+        lines.append(f"LLM calls: {res['llm_calls_used']} of at most {res['llm_calls_cap']}")
     for n in res["notes"]:
         lines.append(f"note: {n}")
     return "\n".join(lines)
@@ -47,7 +56,7 @@ async def amain(args: argparse.Namespace) -> int:
     llm = client.bind(settings.model_for(args.model))
     try:
         async with open_toolbox(settings) as tools:
-            res = await run_agent(args.question, llm, tools, settings)
+            res = await run_agent(args.question, llm, tools, settings, arch=args.arch or settings.arch)
     except EmptyAnswerError as e:  # a failed run, not an answer
         print(f"Run failed: {e}.", file=sys.stderr)
         return 1
@@ -64,6 +73,9 @@ def main() -> None:
     p = argparse.ArgumentParser(prog="atlandex_agent", description=__doc__)
     p.add_argument("question")
     p.add_argument("--model", default="small", help="small | large | an explicit OpenRouter model id")
+    p.add_argument("--arch", choices=["single", "multi"], default=None,
+                   help="single: router -> agent loop -> answer; multi: adds a supervisor and a verification agent "
+                        "(default: AGENT_ARCH, else single)")
     p.add_argument("--no-cache", action="store_true", help="disable the on-disk LLM response cache")
     p.add_argument("--no-trace", action="store_true", help="do not send this run to Langfuse even if keys are set")
     p.add_argument("--json", action="store_true", help="print the full result as JSON")

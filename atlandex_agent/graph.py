@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from dataclasses import replace
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -64,7 +65,6 @@ class State(TypedDict, total=False):
     citation_check: dict[str, Any]
     notes: list[str]
     # multi-agent only; absent in single runs
-    arch: str
     task: str  # the search task the supervisor delegated last
     task_steps_start: int  # len(tool_log) when that task began
     supervisor_turns: list[dict[str, Any]]
@@ -312,6 +312,7 @@ async def run_agent(question: str, llm: LLM, tools: ToolBox, settings: Settings,
     if arch not in ARCHS:
         raise ValueError(f"unknown architecture {arch!r}; use one of {', '.join(ARCHS)}")
     tracer = tracer or tracer_for(settings)
+    trace = replace(trace or TraceInfo(), arch=arch)
     with tracer.run(question, llm.model, trace) as run:
         llm, tools = run.llm(llm), run.tools(tools)
         llm = CallBudget(llm, settings.max_llm_calls_per_run)
