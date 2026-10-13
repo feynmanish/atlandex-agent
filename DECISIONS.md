@@ -136,6 +136,48 @@ Follow-up to the fixed-v1 finding above. Fixed v1 is kept as the intermediate st
 - **v2 large-model run:** 29/29 completed, 0 failed, 0 empty final answers, 5 runs rescued by the empty-answer retry (`ex01`, `ex10`, `ex14`, `nc03`, `nc05`). 71 agent turns: 48 tool calls, 21 `finish`, 2 cut off at 1500 (`nc02` turn 4, `nc09` turn 5), 0 drafts. Segment hit on the existing set 91% (v1 73%, baseline 82%), hallucination on judged sentences 13% / 21% (existing / candidates). Cost: p50 latency 52 s per query vs 34 s (v1) and 38 s (baseline); the `finish` turns alone take a median of 545 tokens. 160 free requests used (584 to 424 remaining), guard never triggered; traces: 29 in Langfuse session `20261012-fixed-v2`.
 - **Not done / open:** the 2 remaining cut-offs show 1500 is not a hard guarantee; the lower-risk option would be no cap for the large model, at the price of the draft-answer problem the cap was introduced for (0 drafts in 71 turns here, but the finish turn is still the longest). The default 1500-token answer budget is tight for the large model (5 of 29 runs needed the retry).
 
+## Multi-agent comparison (2026-10-13)
+
+Design and reasoning are in `PLAN.md`; this section is the **pre-registration**, written and committed before any full run, and the log of what happened afterwards. Results are added below the line marked *Results*, and nothing above that line is edited after the full run starts (corrections go below it, dated).
+
+### What is compared
+
+- `single` (fixed v2 as it is on `main`: router, agent loop, answer, citation check) against `multi` (router, supervisor that hands out search tasks, the same agent loop as search agent, answer, citation check, and a verification agent that checks each answer sentence against the segments it cites). Same queries, same judge, same model for every role, same token caps, same per-run request budget. The single arm is pinned by golden transcripts (`tests/test_single_unchanged.py`), generated from `main` before the refactor.
+- Queries: the 29 verified ones (22 existing + 7 verified candidates), `--include-review` off. Both models, large and small, each model's two arms in one session (`--arch both`, order alternating per query, one shared throttle and judge, `--no-cache`). Large model on day 1, small on day 2.
+- **Equal maximum budget, not equal spend.** Both arms are capped at 13 logical LLM calls per run (the most a single run can make, so the cap never binds for `single`); `multi` will use more on average, and calls, tokens and latency are reported next to quality. No claim of "better at equal cost".
+
+### Primary metrics (per model; existing and candidate sets apart)
+
+1. **Segment hit (±60 s)** on the query-runs completed in both arms.
+2. **Hallucination rate on judged sentences** (unjudged sentences are neither clean nor counted), same judge, same prompt, same 4000-token cap for both arms. The judge sees only the final answer and the retrieved segments, never the architecture.
+
+Secondary, always reported: video hit, LLM calls (mean/max), HTTP attempts, tokens, latency, final sentences per answer, no-coverage answers, sentences the verifier dropped, verifier failures and skips, supervisor fallbacks, route disagreements between the arms (the router is not cached, so the arms can route the same query differently; these are listed, not hidden).
+
+### What counts as a result
+
+- **Segment hit:** exact two-sided sign test on the queries where only one arm hit (discordant pairs). Only `p < 0.05` is reported as a difference, and then as "on this set" (29 queries; one query is 3.4 points, 4.5 on the existing set). Everything else is reported as **"no measurable difference"**.
+- **Hallucination rate:** the difference (multi minus single) with a 95% bootstrap interval that resamples *queries*, not sentences. It is reported as a difference only if the interval excludes 0 **and** the deletion guards below pass. (PLAN.md fixes the interval and the guards but not this combination; this is the operational reading.)
+- **Winning by deleting.** A hallucination gain does **not** count if, on the same model and set, final sentences per answer fall by more than 25% relative to `single`, or segment hit loses more than 1 query net. An empty answer has 0% hallucination; the table therefore always shows judged sentences in absolute terms, no-coverage answers and verifier drops next to the rate.
+
+### Fixed before the full run
+
+- **Verify token cap.** `verify_max_tokens` defaults to `max_tokens` (1500). If more than 20% of the *large* model's verify calls in the smoke run are empty or cut off (`verify.calls[*].empty` or `finish_reason == "length"`), it becomes 4000 before the full run and this section says so. The decision comes from the smoke run only, never from full-run metrics. The small model's verify cap stays at the same value as the large model's, so the two arms of both models use the same cap.
+- **Prompts and settings are frozen** at a commit before the full run (`run_config` in `summary.json` records the commit, prompt hashes and every cap; `git_dirty` must be false). Prompt work uses only `eval/smoke.jsonl` and the three unverified candidates (`nc01`, `nc07`, `nc08`), never the 29 headline queries. Any change after the full run means a new full run of both arms.
+- **Sanity band.** The fresh `single` arm is also compared with fixed v2. Segment hit within ±2 queries of fixed v2 (large model: 91% on the existing set, 20 of 22) is expected. A larger gap means the conditions moved (free-tier load, backend passage windows, uncached router replies) and is reported as such. Fixed v2's small-model half is fixed v1's records, which is a fine comparison point for segment hit but not for latency.
+- **Request budget.** `--min-free-requests 60`: the run stops cleanly before a query when `GET /api/v1/key` reports fewer than 60 free-model requests left, checked once per (query, model), so both arms stop at the same point; pairing then uses only query-runs completed in both. Estimate: about 15 requests per query per model (435 per model before 429 retries; the small model needed retries on about 60% of its calls in v1, so about 700 attempts), which is why the models run on separate days.
+- **Verifier is the judge's model in the large run.** The large model verifies and judges. Dropping what it flags tunes the answer to the judge's own preferences, so a lower rate can come with no better answer. Mitigations: `VERIFY_SYSTEM` is written apart from `judge_prompt.md` (a test checks they share no line longer than 40 characters); the small arm verifies with `laguna`, not the judge; and a second-opinion judge (`cohere/north-mini-code:free`, via `eval.rejudge`) re-judges both arms' large-model answers and is reported next to the main judge. Optional: 30 reference labels on a stratified sample of multi answers, same procedure as the existing judge validation.
+
+### Choices made while implementing PLAN.md (gaps, not changes)
+
+- A supervisor that answers before anything was searched (no linked video, no evidence) is turned into a search of the question: the supervisor's counterpart of the agent's nudge. Recorded in `notes`.
+- On the last supervisor turn the LLM is still called but only "answer" is accepted (a "search" is overridden and noted). The call is spent for a decision that is not in doubt; it is kept because PLAN.md counts it as a supervisor turn.
+- A verifier-requested rewrite needs room for two calls in the budget (answer plus its empty-answer retry). With less, the flagged sentences are dropped instead. The citation-check rewrite is unchanged.
+- The free-request guard is checked per (query, model), not per arm, so a stop never separates the arms of one query. A check that cannot be made (network, unexpected reply) is reported and does not stop the run.
+
+### Results
+
+*(added after the runs)*
+
 ## The existing 22-query set (Phase 2)
 
 - **Source.** The author's earlier, private retrieval-evaluation project (not public; its name, paths and commit identifiers are omitted here). The query set was not committed code there: it existed as untracked files in a local clone, with an identical copy in a stash. I read the files and modified nothing in that project.
