@@ -3,7 +3,7 @@
     "model": "both",
     "subset": null,
     "ids": null,
-    "dataset": "C:\\Users\\DTCSP\\atlandex-agent\\eval\\dataset.jsonl",
+    "dataset": "eval/dataset.jsonl",
     "include_review": false,
     "gold_tolerance_sec": 60,
     "resume": "eval/results/20261012-062749",

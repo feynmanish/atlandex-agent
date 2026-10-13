@@ -4,6 +4,27 @@ A [LangGraph](https://langchain-ai.github.io/langgraph/) agent that answers ques
 
 **Status:** the agent, the eval and three full free-model evaluations (the Phase 2 baseline, fixed v1 and the current fixed v2) are done; see [Results](#results). The judge was validated against reference labels from Claude, not against human labels.
 
+## Quick start
+
+Nothing here needs an API key, a network connection or Langfuse:
+
+```bash
+git clone https://github.com/feynmanish/atlandex-agent && cd atlandex-agent
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+pytest -q                       # every test runs offline with a fake model and fake tools
+python -m atlandex_agent --help
+```
+
+To ask a real question you need three things: an [OpenRouter](https://openrouter.ai) key (a free one is enough: the default models are `:free` models and paid models are refused unless you set `ALLOW_PAID=true`), the URL of a running Atlandex backend, and a working [`atlandex-mcp`](https://github.com/feynmanish/atlandex-mcp) install (the agent launches it over stdio). The backend is a separate service that this repo does not include, so without one the live commands below cannot run; the offline tests and the committed results in `eval/results/` still can be read and checked.
+
+```bash
+cp .env.example .env      # set OPENROUTER_API_KEY, ATLANDEX_API_URL and ATLANDEX_MCP_COMMAND
+python -m atlandex_agent "What does Reiner Pope say about splitting compute between pre-training, RL and inference?" --model small
+```
+
+Leave the `LANGFUSE_*` lines in `.env` empty. Tracing is optional: without both Langfuse keys (or without `pip install -e ".[tracing]"`) it is off, `langfuse` is never imported, and nothing else changes. See [Observability](#observability).
+
 ## How it works
 
 ```mermaid
@@ -130,12 +151,16 @@ Run [`eval/results/20261012-fixed-v2`](eval/results/20261012-fixed-v2/summary.md
 | nemotron-3-super-120b (large) | 22/22 | 91% | 91% | 91% | 13% (45) | 0 of 45 | 1.4 | 38.9 / 101.8 | 4,850 / 1,866 |
 | laguna-xs-2.1 (small), = v1 | 22/22 | 82% | 77% | 82% | 23% (62) | 0 of 62 | 1.9 | 83.4 / 193.2 | 5,326 / 1,022 |
 
-**New multi-step questions, the 7 verified by Claude**
+**New multi-step questions, only 7 queries (verified by Claude)**
 
 | model | runs ok/total | video hit | segment hit (±60 s) | router acc. | hallucination (judged sentences) | unjudged sentences | steps (mean) | latency p50 / p95 (s) | tokens in / out (agent, mean) |
 |---|---|---|---|---|---|---|---|---|---|
 | nemotron-3-super-120b (large) | 7/7 | 71% | 71% | 100% | 21% (19) | 0 of 19 | 5.3 | 107.9 / 190.8 | 16,044 / 4,826 |
 | laguna-xs-2.1 (small), = v1 | 7/7 | 86% | 86% | 86% | 38% (21) | 0 of 21 | 5.7 | 167.4 / 264.5 | 14,399 / 1,960 |
+
+**How to read the hallucination numbers: they are an upper bound, from an imperfect judge.** The rate is the share of judged answer sentences that an LLM judge (`nemotron-3-super-120b:free`) marks as not supported by the passage they cite. It has not been checked by humans. Against reference labels from a stronger model (Claude, not a human) on 30 stratified sentences, the judge agreed 80% of the time (**Cohen's kappa 0.60**), caught all 9 sentences the reference marked unsupported (**high recall**) and raised 6 false alarms (it flagged 15). It therefore over-flags, so read each rate as an **upper bound** on the true unsupported share, not as an estimate of it. Limits of that check: 30 sentences with 9 positives is a small sample, so the high recall is itself uncertain; the reference labeller is an LLM that also wrote the rubric; and the sample was drawn before the judge fix (which changed its token budget and retry, not its prompt). Details: [Judge validation](#judge-validation). Unjudged sentences are 0 in the fixed runs, so these rates have no coverage gap.
+
+**Only 7 queries in the candidates set.** One query is 14 points, the 7 questions were drafted for this repo and checked by Claude rather than a human, and their gold comes from the same retrieval the agent uses. Treat the candidate rows as an illustration, not as a result.
 
 Hit rates are over 22 or 7 queries, so one query is 4.5 or 14 points. Router accuracy moved from 86% (v1) to 91% for the large model on the existing set without a router change: the run is uncached, so router replies vary between runs, and that is one query.
 
@@ -146,7 +171,7 @@ Hit rates are over 22 or 7 queries, so one query is 4.5 or 14 points. Router acc
 
 ### Before / after: baseline → fixed v1 → fixed v2 (same queries, paired)
 
-Only query-runs completed in all three runs are used (large 29, small 24 of 29). Latency is wall-clock seconds per query-run; tokens are the agent's own calls (the judge is excluded). The baseline's hallucination rate uses the re-judged verdicts, so all three come from the same judge code. Hit rates pool the existing and verified-candidate queries. *Cap hits* = agent turns that used their whole token cap (cap in brackets); *drafts* = agent turns with no tool call and more than 200 characters of visible text instead of calling `finish` (only recorded from v2 on). Per-query rows: [`trajectory.md`](eval/results/20261012-fixed-v2/trajectory.md) (rebuild with `python -m eval.trajectory`, see "Run the eval").
+Only query-runs completed in all three runs are used (large 29, small 24 of 29). Latency is wall-clock seconds per query-run; tokens are the agent's own calls (the judge is excluded). The baseline's hallucination rate uses the re-judged verdicts, so all three come from the same judge code. Hit rates pool the existing and verified-candidate queries. *Cap hits* = agent turns that used their whole token cap (cap in brackets); *drafts* = agent turns with no tool call and more than 200 characters of visible text instead of calling `finish` (only recorded from v2 on). The hallucination column has the judge limits described under Fixed v2 (kappa 0.60, high recall, so an upper bound); the candidates are only 7 queries. Per-query rows: [`trajectory.md`](eval/results/20261012-fixed-v2/trajectory.md) (rebuild with `python -m eval.trajectory`, see "Run the eval").
 
 | agent model | run | steps | latency p50 / p95 (s) | tokens in / out | hallucination (judged sent.) | segment / video hit | agent turns | cap hits | drafts instead of `finish` |
 |---|---|---|---|---|---|---|---|---|---|
@@ -172,7 +197,7 @@ Run [`eval/results/20261012-062749`](eval/results/20261012-062749/summary.md) (`
 | nemotron-3-super-120b (large) | 22/22 | 82% | 73% | 86% | 15% (34) | 0 of 34 | 1.2 | 26.4 / 78.0 | 3,998 / 1,374 |
 | laguna-xs-2.1 (small) | 22/22 | 82% | 77% | 82% | 23% (62) | 0 of 62 | 1.9 | 83.4 / 193.2 | 5,326 / 1,022 |
 
-**New multi-step questions, the 7 verified by Claude**
+**New multi-step questions, only 7 queries (verified by Claude)**
 
 | model | runs ok/total | video hit | segment hit (±60 s) | router acc. | hallucination (judged sentences) | unjudged sentences | steps (mean) | latency p50 / p95 (s) | tokens in / out (agent, mean) |
 |---|---|---|---|---|---|---|---|---|---|
@@ -212,7 +237,7 @@ Source: [`eval/results/20261011-125600/summary.json`](eval/results/20261011-1256
 | nemotron-3-super-120b (large) | 22/22 | 82% | 82% | 86% | 41% (27 judged sentences) | 1.5 | 33.5 / 62.9 |
 | laguna-xs-2.1 (small) | 22/22 | 82% | 77% | 82% | 39% (57 judged sentences) | 1.7 | 53.4 / 132.9 |
 
-**New multi-step questions, the 7 verified by Claude** (comparison and find-then-follow-up questions; segment gold is single start times of passages Claude judged relevant)
+**New multi-step questions, only 7 queries (verified by Claude)** (comparison and find-then-follow-up questions; segment gold is single start times of passages Claude judged relevant)
 
 | model | runs ok/total | video hit | segment hit (±60 s) | router acc. | hallucination (judge, upper bound) | steps (mean) | latency p50 / p95 (s) |
 |---|---|---|---|---|---|---|---|
@@ -223,7 +248,7 @@ The small model's 5 missing runs are upstream HTTP 429 outages (it was retried i
 
 Cost: $0.00 (free models). Mean tokens per completed run, existing set: large 5,129 in / 1,785 out, small 4,940 in / 970 out.
 
-How to read the hallucination column: the judge over-flags (see below), 24 of the 44 sentences it flagged cited nothing at all, and 27 sentences got no verdict and are excluded (see the re-judge below). In the 30-row validation sample the judge's flags were right 9 times out of 15, so the true rate under the reference rubric is probably well below these numbers. Treat them as an upper bound.
+How to read the hallucination column: the judge over-flags (see below), 24 of the 44 sentences it flagged cited nothing at all, and 27 sentences got no verdict and are excluded (see the re-judge below). In the 30-row validation sample (Cohen's kappa 0.60, recall 9 of 9) the judge's flags were right 9 times out of 15, so the true rate under the reference rubric is probably well below these numbers. Treat them as an upper bound.
 
 **Re-judging the unjudged sentences.** The 27 (30 with the candidates the headline leaves out) were unjudged because the free judge ran out of its 1500-token budget. The judge now gets 4000 tokens, keeps the verdicts of a cut-off reply and re-asks only for the missing sentences (`python -m eval.rejudge --results eval/results/20261011-125600 --only-unjudged`). On this run it re-judged 7 answers and left 0 sentences unjudged. The table above is the original, as published; the re-judged numbers are in [`rejudge_report.json`](eval/results/20261011-125600/rejudge_report.json):
 
@@ -262,3 +287,7 @@ So the main judge is usable but strict: it rarely misses an unsupported claim an
 - The small model's fixed-v2 records are its fixed-v1 records (see Results for why that is valid); only the large model was re-run.
 - An empty answer is retried once with a 4000-token budget and fails the run if still empty; 5 of 29 large-model runs needed the retry, so the default 1500-token answer budget is tight for the large model.
 - The uncited-claim check is a heuristic (see DECISIONS.md): it can miss an uncited claim phrased like a "not covered" statement, and it treats a bare ID without brackets as uncited.
+
+## License
+
+The code is under the [MIT License](LICENSE). The data is not covered by it: `eval/existing/`, `eval/labels/` and `eval/results/` quote short excerpts of the automatic transcripts of third-party YouTube videos (the queries, the retrieved passages and the model answers that cite them), which belong to the videos' creators and are included only to make the evaluation reproducible and checkable.

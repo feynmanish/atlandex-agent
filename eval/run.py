@@ -32,6 +32,21 @@ DEFAULT_DATASET = ROOT / "eval" / "dataset.jsonl"
 RESULTS_DIR = ROOT / "eval" / "results"
 
 
+def portable_args(args: argparse.Namespace) -> dict[str, Any]:
+    """The command-line arguments for summary.json, with paths inside the repo made repo-relative.
+
+    Absolute paths would leak the local user name and folder layout into files that are committed.
+    """
+    out = dict(vars(args))
+    for key, value in out.items():
+        if isinstance(value, str) and Path(value).is_absolute():
+            try:
+                out[key] = Path(value).resolve().relative_to(ROOT).as_posix()
+            except ValueError:
+                out[key] = Path(value).name
+    return out
+
+
 def load_dataset(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
@@ -212,7 +227,7 @@ async def amain(args: argparse.Namespace) -> int:
         r.setdefault("latency_sec", 0.0)
         r["model"] = r.get("model") or settings.model_for(r["model_alias"])
     agg = aggregate(records, args.gold_tolerance_sec)
-    summary = {"command": vars(args), "models": {a: settings.model_for(a) for a in models},
+    summary = {"command": portable_args(args), "models": {a: settings.model_for(a) for a in models},
                "judge_model": settings.model_large, "gold_tolerance_sec": args.gold_tolerance_sec,
                "paid_spend_usd": round(client.paid_spend_usd, 6), "n_records": len(records),
                "stopped_early": str(stop) if stop else None, **agg}
