@@ -83,7 +83,7 @@ flowchart TD
 ```
 
 - **Bounds.** At most 3 supervisor turns (the last can only answer), the same 6 tool steps in total (3 per task), at most 2 answer drafts (the verifier's rewrite uses the same slot as the citation check's), at most 2 verification rounds, and at most **13 LLM calls per run for both architectures**. 13 is the most a single run can make, so the cap never changes `single`; in `multi`, once the calls left would not cover the answer, one rewrite and one verification, the graph goes to the answer (`call budget: forced answer` in the notes).
-- **The verifier fails open.** An empty or unparseable verifier reply drops nothing. A sentence is dropped only when the verifier flags it twice (or once, if the citation check had already used the rewrite).
+- **The verifier fails open.** An empty or unparseable verifier reply drops nothing. A flagged sentence gets one rewrite; it is dropped without one when the citation check has already used the rewrite, when fewer than 2 LLM calls are left, or when it is first flagged in the second verification round.
 - **Same model, same caps.** Every role runs on the model under test. Supervisor and search turns use the agent-turn cap (large 1500, small 600), the verifier the 1500-token default (`VERIFY_MAX_TOKENS` to change it).
 - Settings (all optional, see `.env.example`): `AGENT_ARCH`, `SEARCH_STEPS_PER_TASK`, `MAX_SUPERVISOR_TURNS`, `VERIFY_MAX_TOKENS`, `MAX_LLM_CALLS_PER_RUN`.
 - The eval compares the two on the same queries with `python -m eval.run --arch both` and `python -m eval.compare --baseline R:single --fixed R:multi`; the design, the guards against a gain that only comes from deleting sentences, and the pre-registered rules are in [PLAN.md](PLAN.md) and [DECISIONS.md](DECISIONS.md#multi-agent-comparison-2026-10-13).
@@ -177,19 +177,35 @@ Three runs of the same 29 verified queries, never mixed in one table: **fixed v2
 
 ### Single vs multi-agent (2026-10-13/14)
 
-Runs [`20261013-174814`](eval/results/20261013-174814/summary.md) (large) and [`20261014-074127`](eval/results/20261014-074127/summary.md) (small), commit `e531ba3`, `python -m eval.run --arch both --no-cache`: the two graphs on the same queries, back to back, alternating order, one throttle, the same judge (nemotron), the same models and token caps, at most 13 LLM calls per run for both. Paired comparisons: `arch_comparison.md` in each folder. The rules for what counts as a result were committed before the runs ([DECISIONS.md](DECISIONS.md#multi-agent-comparison-2026-10-13)).
+Runs [`20261013-174814`](eval/results/20261013-174814/summary.md) (large) and [`20261014-074127`](eval/results/20261014-074127/summary.md) (small), commit `e531ba3`, `python -m eval.run --arch both --no-cache`. Both graphs ran on the same queries, back to back with alternating order, under one throttle. They had the same judge (nemotron), the same models and token caps, and at most 13 LLM calls per run each. The rules for what counts as a result were committed before the runs ([DECISIONS.md](DECISIONS.md#multi-agent-comparison-2026-10-13)). Per-query rows: `arch_comparison.md` in each folder.
 
-| model | paired queries | | segment hit (±60 s) | hallucination, main judge (judged sentences) | LLM calls mean / max | latency p50 / p95 (s) | tokens in / out |
-|---|---|---|---|---|---|---|---|
-| large | 29 of 29 | single | 22/29 (76%) | 21% (52) | 4.3 / 9 | 64 / 138 | 6161 / 1982 |
-| large | 29 of 29 | multi | 23/29 (79%) | 10% (50) | 7.4 / 13 | 88 / 199 | 9296 / 3466 |
-| small | 22 of 29 | single | 19/22 (86%) | 20% (55) | 4.4 / 9 | 91 / 267 | 6332 / 1236 |
-| small | 22 of 29 | multi | 11/22 (50%) | 27% (59) | 6.5 / 11 | 133 / 294 | 8727 / 2229 |
+**The 22-query set (existing), paired query-runs only**
 
-- **Large:** no measurable difference in segment hit (1 vs 2 discordant queries, p = 1.0). The hallucination rate falls from 21% to 10% on the main judge, but the 95% interval over queries (−28 to +4 points) includes 0, so by the registered rule that is **no measurable difference**. A second judge from another family (`cohere/north-mini-code:free`, not the registered primary) sees 31% → 4% (−27 points, [−42, −13]). The deletion guards pass (2.3 final sentences per answer in both arms, 1 sentence dropped by the verifier). The multi arm costs 72% more LLM calls and 37% more median latency, and 7 of its 29 runs hit the call cap and were sent to the answer early.
-- **Small:** 7 of 58 query-runs could not be completed (upstream HTTP 429 for long stretches, six resume passes), so 22 queries are paired. Segment hit is lower for multi (8 vs 0 discordant, p = 0.008), but in 7 of those 8 queries the multi answer cites a passage with no start time (`@na`), which can never be a segment hit, and the same first search returned timed passages in the single arm; on the 8 queries where neither arm retrieved an untimed passage the two are level (5 vs 4). That is the backend's null-`start_sec` behaviour ([DECISIONS.md](DECISIONS.md)), so this result cannot be attributed to the architecture. Hallucination: 20% vs 27%, no measurable difference. The small model's verifier flagged nothing in 21 calls, 4 of them empty or cut off.
-- **Conditions moved:** the fresh single arm of the large model hit 22/29 against fixed v2's 25/29 (the registered band was ±2): the router, which is not cached, answered two queries with a clarifying question in the single arm and not in the multi arm.
-- **Not shown:** that `multi` is better, at equal cost or otherwise. The sample can detect only large effects, nothing was ablated (supervisor and verifier together), and the verifier is the judge's model in the large run.
+| model | arm | paired | task success (segment hit ±60 s) | unsupported sentences, main judge (upper bound) | steps (mean) | latency p50 / p95 (s) | tokens in / out (agent, per query) | LLM calls mean / max |
+|---|---|---|---|---|---|---|---|---|
+| large | single | 22 of 22 | 18/22 (82%) | 4 of 30 (13%) | 1.1 | 43 / 85 | 3,840 / 1,416 | 3.2 / 5 |
+| large | multi | 22 of 22 | 19/22 (86%) | 3 of 30 (10%) | 1.8 | 80 / 195 | 7,824 / 2,730 | 6.5 / 10 |
+| small | single | 19 of 22 | 16/19 (84%) | 9 of 43 (21%) | 1.7 | 80 / 197 | 4,962 / 1,109 | 3.8 / 7 |
+| small | multi | 19 of 22 | 9/19 (47%) | 10 of 49 (20%) | 1.8 | 116 / 297 | 7,848 / 2,182 | 5.9 / 11 |
+
+**What it means.** On this set the multi-agent setup did not beat the single agent.
+- **Large model:** task success shows no measurable difference (18 vs 19 queries; sign test on 1 vs 2 discordant queries, p = 1.0), and neither do unsupported sentences (difference −3 points, 95% interval over queries −20 to +11).
+- **Small model:** task success was lower with multi (16 vs 9 of 19; 7 vs 0 discordant, p = 0.016), and unsupported sentences show no measurable difference (−1 point, interval −14 to +18).
+- **Cost:** multi needed 1.6–2× the LLM calls and 45–88% more median latency.
+
+**How to read the unsupported-sentence column.** It is the share of judged answer sentences that the LLM judge (`nemotron-3-super-120b:free`) marks as not supported by the passage they cite. It is an **upper bound**: against Claude's reference labels the judge agreed 80% of the time (kappa 0.60), caught every unsupported sentence and also raised false alarms (see [Judge validation](#judge-validation)). No sentence was left unjudged, so the upper bound that counts unjudged sentences as unsupported equals the rate. In the large run the verifier is the judge's own model, so a drop there can come from tuning answers to that judge.
+
+**What is shaky**
+- **Small sample.** One query is 4.5 points on the 22-query set and 5.3 points on the small model's 19.
+- **The large model's +1 query is router noise.** Both queries that only multi hit (`ex06`, `ex18`) are queries where the uncached router sent the single arm to a clarifying question instead of an answer. On the one query that only single hit (`ex09`), multi cites an untimed passage. Against fixed v2 (20/22) the fresh single arm (18/22) is inside the registered ±2 band.
+- **The small model's loss has no known cause.** In 6 of its 7 discordant queries the multi answer cites a passage with no start time (`@na`), which can never be a segment hit. The 7th (`ex07`) is router noise: the multi arm routed it `unclear`. On the 15 queries where both arms called `search_video`, their first call was identical (same video, same question). Multi got untimed passages and single did not in 10 of them; the reverse happened in 1 (`ex15`). The large model shows the same skew (5 vs 1 of 18 such queries). This was first written up as backend noise that the architecture cannot cause; that does not hold, and the cause is unknown (see the corrections in [DECISIONS.md](DECISIONS.md)).
+- **Same conditions cannot be checked for the small run.** 3 query-runs (`ex13` and `ex14` in multi, `ex17` in single) were never completed because of upstream HTTP 429s. Six resume passes re-ran only the failed arm, so many pairs ran hours apart, and the records carry no timestamps.
+- **The call cap binds only for multi.** Single never comes close to 13 calls. Multi was sent to the answer early in 1 of 22 large and 2 of 19 small runs here, and in 6 of the 7 multi-step candidates.
+- **A second judge, not the registered one,** sees a larger drop for the large model: `cohere/north-mini-code:free`, 8 of 30 → 2 of 30 sentences unsupported, interval −38 to −3. This is one extra run with an alternative judge (kappa 0.53 against the reference labels). It was computed with `eval.metrics.bootstrap_diff` over `judge_north-mini.jsonl`; there is no CLI for it yet.
+
+**The 7 multi-step candidates are reported apart and are an illustration only.**
+- **Large:** task success 4/7 in both arms; unsupported sentences 7 of 22 → 2 of 20 (interval −55 to +11). Multi was budget-forced in 6 of the 7, so its research was cut short.
+- **Small:** only 3 candidates are paired, which is too few to report.
 
 ### Fixed v2 (current)
 
