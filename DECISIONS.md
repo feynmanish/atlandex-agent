@@ -222,6 +222,43 @@ Runs, both at commit `e531ba3` with `git_dirty: false` and every cap and prompt 
 - **Backend traffic.** The backend fetches transcripts through a metered proxy (the author told me while the small run was going). I had estimated data use from my own scripts' traffic only and told the author the run would fit in their allowance; I did not know the backend's proxy use. I stopped the running pass, the author decided to continue, and the remaining passes were run. The proxy cost of the evaluation was not measured. The records file of the interrupted pass had been partially written (47 of 58 records); the next `--resume` rebuilt it, and `records.jsonl.bak` of that folder holds only the file as it was at that moment.
 - A resumed pass keeps the first pass's `run_config` (the commit stayed `e531ba3` throughout, so nothing changed).
 
+### Corrections (2026-10-14, after a review of the results)
+
+A read-only review recomputed the figures above from `records.jsonl`. I re-checked each point below against the records. The text above is left as first written, so these corrections replace it where they conflict. No new runs were made and no code was changed.
+
+1. **The untimed-passage explanation is withdrawn.** The small-model *Caveat* above attributes the segment-hit loss to the backend's null `start_sec` behaviour, "not something the architecture controls". The records do not support that. For each paired query on the existing set, I compared the first `search_video` call of the two arms; where both arms made one, the call was identical (same video, same question):
+   - **Small model**, 15 such queries: multi got untimed passages and single did not in 10 (`ex01`, `ex03`, `ex05`, `ex09`, `ex10`, `ex12`, `ex19`, `ex20`, `ex21`, `ex22`). The reverse happened in 1 (`ex15`), and both arms got untimed passages in 1 (`ex16`).
+   - **Large model**, 18 such queries: multi only in 5 (`ex03`, `ex05`, `ex16`, `ex19`, `ex21`), single only in 1 (`ex01`), both in 3.
+
+   The skew is by arm, and its cause is unknown. One possibility is timing: the small run re-ran single arms on their own (item 4). But the large run had no resumes and alternated the order, and there the arm that got untimed passages ran second in 4 of these 6 queries, so run order is not an obvious explanation either. Two other claims are also withdrawn:
+   - The restriction to "queries where neither arm retrieved an untimed passage" was post hoc. It selects on a variable that the arm itself affects, so it is not evidence either way.
+   - The claim that "in 7 of the 8 discordant queries the same first search returned timed passages in the single arm" is wrong. `ex16`'s single arm also got untimed passages on that call. `nc02`'s untimed passages came from later multi searches. The 8th discordant query (`ex07`) was lost to router noise: the multi arm routed it `unclear`.
+2. **The primary metrics are reported per set, as registered.** The pooled sign tests and intervals above should have been given per set (existing, candidates).
+   - **Large, existing (22):** segment hit 18 vs 19 (discordant 1 / 2, p = 1.0); hallucination 4/30 vs 3/30, −3 pts [−20, +11].
+   - **Large, candidates (7):** segment hit 4 vs 4; hallucination 7/22 vs 2/20, −22 pts [−55, +11].
+   - **Small, existing (19 paired):** segment hit 16 vs 9 (discordant 7 / 0, p = 0.016); hallucination 9/43 vs 10/49, −1 pt [−14, +18].
+   - **Small, candidates:** 3 paired, not reported.
+
+   Most of the large model's pooled hallucination drop is on the 7 candidates, where 6 of 7 multi runs were budget-forced. The large model's +1 segment hit on the existing set comes from `ex06` and `ex18`, where the single arm's router returned `unclear`.
+3. **Budget-forced small-model runs: 8 of 25 completed multi runs, not 5** (`ex08`, `ex12`, `ex17`, `nc02`, `nc03`, `nc05`, `nc09`, `nc10`). 5 is the count over the 22 paired runs.
+4. **The small run's conditions cannot be verified.**
+   - `--resume` re-runs only the errored arm, so after six passes many pairs ran hours apart.
+   - Records carry no timestamp or pass number.
+   - `records.jsonl.bak` is rewritten on every resume. It holds the input of the last pass and is identical to `records.jsonl` (58 records), not the interrupted 47-record file described above. The history of the earlier passes is lost.
+   - The 7 unfinished runs are not missing at random: multi makes about 50% more calls per run, so it is more exposed to 429s.
+5. **The sanity band was met.** It was registered on the existing set. The fresh large single arm hit 18/22 against fixed v2's 20/22, which is inside ±2. The "not met" above used the full set.
+6. **Latency:** median latency rose 37% (large) and 46% (small) on the pooled set, not "about 40-45% in every case". On the existing set it rose 88% (large) and 45% (small).
+7. **`git_dirty: false` is verified for the first pass only.** A resumed pass keeps the first pass's `run_config` and does not re-check the dirty state. The commit stayed `e531ba3`.
+8. **The verifier's drop rule in the README was incomplete.** A sentence is also dropped after a single flag when fewer than 2 LLM calls are left, or when it is first flagged in the second verification round.
+9. **The second-opinion judge's figures** (pooled −27 pts [−42, −13]; existing set 8/30 → 2/30, −20 pts [−38, −3]) were computed with `eval.metrics.bootstrap_diff` over `judge_north-mini.jsonl`, paired with the records. No CLI produces them yet.
+10. **Known harness issues, not fixed here:**
+    - `eval.compare` applies a re-judge sidecar to the baseline side only. This does not affect these runs, which have no sidecar.
+    - The final-sentence guard counts clarifying questions and the no-coverage reply as answer sentences.
+    - A resume that does not re-run both arms of a query breaks the pairing in time (item 4).
+    - Forced supervisor pseudo-turns (no LLM call) are stored as supervisor turns.
+
+The README's comparison table is now the 22-query set with these corrections applied.
+
 ## The existing 22-query set (Phase 2)
 
 - **Source.** The author's earlier, private retrieval-evaluation project (not public; its name, paths and commit identifiers are omitted here). The query set was not committed code there: it existed as untracked files in a local clone, with an identical copy in a stash. I read the files and modified nothing in that project.
