@@ -186,7 +186,41 @@ Secondary, always reported: video hit, LLM calls (mean/max), HTTP attempts, toke
 
 ### Results
 
-*(added after the runs)*
+Runs, both at commit `e531ba3` with `git_dirty: false` and every cap and prompt as frozen above (`run_config` in each `summary.json`): `eval/results/20261013-174814` (large model, 29 verified queries, both arms, 58/58 query-runs completed, 0 failed) and `eval/results/20261014-074127` (small model, both arms; see below for what is missing). Paid spend $0.00. Large: 585 free requests that day in total including the smoke runs. Small: 608 free requests in total, over the first run and six `--resume` passes. The comparisons are `arch_comparison.md` / `.json` in each folder (`eval.compare R:single R:multi`).
+
+**Large model (nemotron), 29 paired queries.** Primary metrics, as registered:
+
+| | single | multi | reading |
+|---|---|---|---|
+| segment hit (±60 s) | 22/29 (76%); existing 18/22, candidates 4/7 | 23/29 (79%); existing 19/22, candidates 4/7 | discordant 1 / 2, sign test p = 1.0: **no measurable difference** |
+| hallucination, main judge | 21% (11 of 52 judged sentences) | 10% (5 of 50) | difference −11 pts, 95% bootstrap over queries [−28, +4] includes 0: **no measurable difference** under the registered rule |
+| hallucination, second-opinion judge (`cohere/north-mini-code:free`, not the registered primary) | 31% (16/52) | 4% (2/50) | difference −27 pts [−42, −13], excludes 0 |
+
+- **Guards pass:** final sentences per answer 2.3 vs 2.3, segment hit did not fall, 1 no-coverage answer (`nc04`, which also missed in single) and 1 sentence dropped by the verifier in 29 runs. So the lower hallucination rate is not explained by deleting content. The verifier flagged 10 sentences in 34 verify calls (9 rewrites); it is not clear how much of the drop comes from the verifier and how much from different answers: no ablation was run.
+- **Why the main-judge interval includes 0 although the point difference is 11 points:** 29 queries, about 50 judged sentences per arm. The single arm's own rate moved from 16% (fixed v2, same model, same queries) to 21% in this run, which is a measure of the run-to-run noise.
+- **Sanity band against fixed v2 not met on the full set.** The fresh single arm hit 22/29 against fixed v2's 25/29; on the existing set 18/22 against 20/22 (exactly the ±2 edge). ex06 and ex18 account for two of the three: the router (not cached) returned `unclear` for them in the single arm, which ended with a clarifying question and no answer, and `simple` in the multi arm. These are the 2 route disagreements. Conditions moved or the router is noisy at this size; either way one run cannot separate them.
+- **Cost, not hidden:** LLM calls per run 4.3 (max 9) → 7.4 (max 13); latency p50 64 s → 88 s, p95 138 s → 199 s; agent tokens in 6161 → 9296, out 1982 → 3466 per run. HTTP attempts for the agent calls 126 → 216. 7 of 29 multi runs ended with `call budget: forced answer` (6 of the 7 candidates), i.e. the cap shortened the research; 0 supervisor fallbacks in 50 supervisor turns; 1 of 34 verify calls was cut off (fail-open, nothing dropped).
+- **The verifier and the main judge are the same model here** (see the registered caveat). The second-opinion judge, a different family, shows the same direction and a larger gap, which argues against the drop being purely a main-judge artefact, but it is one run, one second opinion and 50 sentences per arm.
+
+**Small model (laguna), 22 paired of 29 queries.** The model returned HTTP 429 for long stretches (as in v1): 34 of 58 query-runs failed in the first pass; the unfinished count was then 19, 12, 10 and 7 after the successive resume passes (one pass, the second, was cut off by me; see below), and the last pass fixed none. I stopped there with **7 query-runs unfinished** (multi: `ex13`, `ex14`, `nc04`, `nc06`; single: `ex17`, `nc03`, `nc09`); they are missing, not counted as misses. Completed: single 26/29, multi 25/29; paired 22 (19 existing, 3 candidates). The 3 candidates make the candidate rows meaningless.
+
+| | single | multi | reading |
+|---|---|---|---|
+| segment hit (±60 s) | 19/22 (86%) | 11/22 (50%) | discordant 8 / 0, p = 0.008: by the registered rule **multi is lower, on this set** |
+| hallucination, main judge | 20% (11 of 55) | 27% (16 of 59) | +7 pts [−8, +25]: **no measurable difference** |
+
+- **Caveat that matters for the segment-hit result (post hoc, not registered):** in 7 of the 8 queries where only single hit, the multi answer cites a passage with no start time (`video@na<rank>`), which can never be a segment hit, and in `ex16`, `ex19` and `ex22` both arms made the identical first `search_video` call (the linked video, the same question) and got timed passages in one arm and untimed ones in the other. That is the backend behaviour already recorded as finding 1 above (null `start_sec`, varying with time and load), not something the architecture controls. Restricted to the 8 queries where neither arm retrieved an untimed passage, single hit 5 and multi 4 (discordant 1 / 0, p = 1.0). In the large run the same restriction (n = 9) gives 6 vs 7. So the registered result stands as measured, but it cannot be attributed to the architecture, and with untimed passages this common (small: 33 untimed segments in multi, 19 in single; large: 38 and 17) the segment-hit metric is noisier than the sign test assumes.
+- **The small model's verifier was inactive:** it flagged nothing in 21 verify calls, and 4 of those 21 (19%) were empty or cut off. Nothing was dropped. The 20% rule applied to the smoke run only; this is reported, not acted on.
+- **Costs:** LLM calls 4.4 (max 9) → 6.5 (max 11); latency p50 91 s → 133 s; 5 of 25 multi runs budget-forced; 1 supervisor fallback.
+- **Sanity band:** the small single arm hit 20 of the 26 queries it shares with fixed v1's small half (which fixed v2 reuses), against 21: within the band.
+
+**What this does and does not show.** On this set, in these runs: no measurable difference in segment hit for the large model; no measurable difference in the main judge's hallucination rate for either model (a second judge sees a clear drop for the large model); a lower segment hit for the small model that is entangled with untimed backend passages. In every case `multi` used about 50-70% more LLM calls and about 40-45% more median latency. Nothing here supports "multi is better at equal cost", and the registered sample size could only have detected large effects. Not done: no ablation of the supervisor and the verifier separately, no second-opinion judge for the small model (the plan asks for the large model only), no reference labels on multi answers, no paired re-run to measure the noise of a repeated single arm.
+
+**What went wrong.**
+- The call cap (13, with 5 reserved) shortens research in most multi-step multi runs; this is the plan's rule, and is visible as `budget_forced_runs`.
+- The small run needed six resume passes and ended incomplete (above). A first draft of the verifier prompt flagged every "Speaker says ..." sentence (smoke section).
+- **Backend traffic.** The backend fetches transcripts through a metered proxy (the author told me while the small run was going). I had estimated data use from my own scripts' traffic only and told the author the run would fit in their allowance; I did not know the backend's proxy use. I stopped the running pass, the author decided to continue, and the remaining passes were run. The proxy cost of the evaluation was not measured. The records file of the interrupted pass had been partially written (47 of 58 records); the next `--resume` rebuilt it, and `records.jsonl.bak` of that folder holds only the file as it was at that moment.
+- A resumed pass keeps the first pass's `run_config` (the commit stayed `e531ba3` throughout, so nothing changed).
 
 ## The existing 22-query set (Phase 2)
 

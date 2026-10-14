@@ -18,8 +18,10 @@ dist/
 eval/results/*/records.jsonl*
 
 # Eval runs are scratch by default. Only the runs the README cites are kept:
-# baseline, fixed v1, fixed v2. Publish a new run by adding a "!" line here.
+# baseline, fixed v1, fixed v2 and the two single vs multi-agent runs. Publish a new run by adding a "!" line here.
 eval/results/*
 !eval/results/20261011-125600/
 !eval/results/20261012-062749/
 !eval/results/20261012-fixed-v2/
+!eval/results/20261013-174814/
+!eval/results/20261014-074127/

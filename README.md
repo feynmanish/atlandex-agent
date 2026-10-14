@@ -2,7 +2,7 @@
 
 A [LangGraph](https://langchain-ai.github.io/langgraph/) agent that answers questions about long-form video by calling the three tools of [`atlandex-mcp`](https://github.com/feynmanish/atlandex-mcp) (`find_videos`, `search_video`, `locate_quote`), plus an evaluation harness that measures video hit, segment hit (±60 s), router accuracy and hallucination rate with an LLM judge. All models run through [OpenRouter](https://openrouter.ai), on free `:free` models by default.
 
-**Status:** the agent, the eval and three full free-model evaluations (the Phase 2 baseline, fixed v1 and the current fixed v2) are done; see [Results](#results). The judge was validated against reference labels from Claude, not against human labels.
+**Status:** the agent, the eval, three full free-model evaluations (the Phase 2 baseline, fixed v1 and the current fixed v2) and a single vs multi-agent comparison are done; see [Results](#results). The judge was validated against reference labels from Claude, not against human labels.
 
 ## Quick start
 
@@ -174,6 +174,22 @@ All tests run offline with a fake LLM, a fake toolbox and a mock HTTP transport:
 ## Results
 
 Three runs of the same 29 verified queries, never mixed in one table: **fixed v2** (current), **fixed v1** (an intermediate step, kept for the record) and the **Phase 2 baseline** from before any fix. They are linked only by the paired before/after table below. Free models only, paid spend $0.00, tracing on. The judge is `nvidia/nemotron-3-super-120b-a12b:free`. Treat all of it as a small-sample snapshot, not a ranking: 22 and 7 queries per model.
+
+### Single vs multi-agent (2026-10-13/14)
+
+Runs [`20261013-174814`](eval/results/20261013-174814/summary.md) (large) and [`20261014-074127`](eval/results/20261014-074127/summary.md) (small), commit `e531ba3`, `python -m eval.run --arch both --no-cache`: the two graphs on the same queries, back to back, alternating order, one throttle, the same judge (nemotron), the same models and token caps, at most 13 LLM calls per run for both. Paired comparisons: `arch_comparison.md` in each folder. The rules for what counts as a result were committed before the runs ([DECISIONS.md](DECISIONS.md#multi-agent-comparison-2026-10-13)).
+
+| model | paired queries | | segment hit (±60 s) | hallucination, main judge (judged sentences) | LLM calls mean / max | latency p50 / p95 (s) | tokens in / out |
+|---|---|---|---|---|---|---|---|
+| large | 29 of 29 | single | 22/29 (76%) | 21% (52) | 4.3 / 9 | 64 / 138 | 6161 / 1982 |
+| large | 29 of 29 | multi | 23/29 (79%) | 10% (50) | 7.4 / 13 | 88 / 199 | 9296 / 3466 |
+| small | 22 of 29 | single | 19/22 (86%) | 20% (55) | 4.4 / 9 | 91 / 267 | 6332 / 1236 |
+| small | 22 of 29 | multi | 11/22 (50%) | 27% (59) | 6.5 / 11 | 133 / 294 | 8727 / 2229 |
+
+- **Large:** no measurable difference in segment hit (1 vs 2 discordant queries, p = 1.0). The hallucination rate falls from 21% to 10% on the main judge, but the 95% interval over queries (−28 to +4 points) includes 0, so by the registered rule that is **no measurable difference**. A second judge from another family (`cohere/north-mini-code:free`, not the registered primary) sees 31% → 4% (−27 points, [−42, −13]). The deletion guards pass (2.3 final sentences per answer in both arms, 1 sentence dropped by the verifier). The multi arm costs 72% more LLM calls and 37% more median latency, and 7 of its 29 runs hit the call cap and were sent to the answer early.
+- **Small:** 7 of 58 query-runs could not be completed (upstream HTTP 429 for long stretches, six resume passes), so 22 queries are paired. Segment hit is lower for multi (8 vs 0 discordant, p = 0.008), but in 7 of those 8 queries the multi answer cites a passage with no start time (`@na`), which can never be a segment hit, and the same first search returned timed passages in the single arm; on the 8 queries where neither arm retrieved an untimed passage the two are level (5 vs 4). That is the backend's null-`start_sec` behaviour ([DECISIONS.md](DECISIONS.md)), so this result cannot be attributed to the architecture. Hallucination: 20% vs 27%, no measurable difference. The small model's verifier flagged nothing in 21 calls, 4 of them empty or cut off.
+- **Conditions moved:** the fresh single arm of the large model hit 22/29 against fixed v2's 25/29 (the registered band was ±2): the router, which is not cached, answered two queries with a clarifying question in the single arm and not in the multi arm.
+- **Not shown:** that `multi` is better, at equal cost or otherwise. The sample can detect only large effects, nothing was ablated (supervisor and verifier together), and the verifier is the judge's model in the large run.
 
 ### Fixed v2 (current)
 
